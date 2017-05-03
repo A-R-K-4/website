@@ -1,0 +1,383 @@
+//Site menu: overlay, pack/unpack and burger icon.
+function Menu(){
+	var _this = this;
+	var _menu = document.getElementsByClassName("overlaymenu")[0];
+	var _topbar = document.getElementsByClassName("topbar")[0];
+	var _burger = _topbar.getElementsByClassName("burger")[0];
+	if(!GLB._isTouch) _burger.className = "burger notouch";
+	var _menuItems = _menu.getElementsByClassName("menuItems")[0];
+	var _logo = _topbar.getElementsByClassName("logo")[0];
+	if(GLB._hideSVG) _logo.style.display = "none";
+	var _logoName = _logo.getElementsByClassName("logoImgB")[0];
+	//Get all menuItems
+	var _items = [], _subMenuItems = [];
+	var _menuItemsHTML = _menu.getElementsByClassName("menuItem");
+	var _numMenuItems = _menuItemsHTML.length;
+	for(var i=0;i<_numMenuItems;i++){
+		_items.push(new MenuItem(_menuItemsHTML[i]));
+		GLBEvents(_menuItemsHTML[i], "clickEvent", clickedMenuItem, true);
+	}
+	var _submenuItemsHTML = _menu.getElementsByClassName("submenuItem");
+	var _numSubMenuItems = _submenuItemsHTML.length;
+	for(i=0;i<_numSubMenuItems;i++){
+		_subMenuItems.push(new SubMenuItem(i, _submenuItemsHTML[i]));
+		GLBEvents(_submenuItemsHTML[i], "clickEvent", clickedMenuItem, true);
+	}
+	GLBEvents(_logo, "click", clickedMenuItem, true);
+	
+	var _whiteBg = new MenuLayer(_topbar, 0, "menuBg");
+	var _pinkFullBg = new MenuLayer(_topbar, 1, "menuBgPink");
+	var _black = document.createElement("div");
+	_black.className = "black";
+	_topbar.insertBefore(_black, _topbar.firstChild);
+	var _menuOn = false;
+	
+	//Intro
+	var _url = _router.getUrl();
+	if(_url == "" || _url == "/"){
+		if(GLB._supportsAutoPlay) setTimeout(showName, 1000), TweenLite.to(_topbar, .8, {y:0, force3D:false, ease:Quad.easeOut, delay:3.4});//Wait for intro video
+		else showName(), TweenLite.set(_topbar, {y:0, force3D:false, delay:0});
+	}
+	else setTimeout(showName, 1000), TweenLite.set(_topbar, {y:0, force3D:false, delay:0});
+	//Make sure deeplinks don't get a glimpse of the name
+	function showName(){
+		_logoName.style.visibility = "visible";
+	}
+
+	
+	//The whitebg is tilted:
+	function resized(e){
+		//Left height open, right height open, left height closed, right height closed
+		if(/*GLB._reliableSh < 500 || */GLB._isMobile){
+			_whiteBg.resized(80, 64, 50, 40, 0);
+			_pinkFullBg.resized(GLB._reliableSh, GLB._reliableSh-16, 50, 40, 80);//no packed menu here
+		}
+		else if(GLB._reliableSh < 700){
+			_whiteBg.resized(140, 80, 100, 54, 0);
+			_pinkFullBg.resized(GLB._reliableSh, GLB._reliableSh-60, 100, 54, 140);
+		}
+		else{
+			_whiteBg.resized(160, 80, 100, 54, 0);
+			_pinkFullBg.resized(GLB._reliableSh, GLB._reliableSh-80, 100, 54, 160);
+		}
+	}
+	GLBEvents(window, "resize", resized, true);
+	resized(null);
+		
+	//Menu topbar autocloses after a short while (but not on frontpage) and also opens/closes on hover.
+	var _overTopBar = false, _overlayOn = false;
+	if(!GLB._isTouch){
+		GLBEvents(_topbar, "mouseenter", overTopBar, true);
+		GLBEvents(_topbar, "mouseleave", outTopBar, true);
+	}
+	else{
+		GLBEvents(_logo, "touchstart", clickedMenuItem, true);
+		GLBEvents(_burger, "touchstart", toggleMenu, true);
+	}
+	GLBEvents(_burger, "click", toggleMenu, true);
+	GLBEvents(window, "hideMenu", hideIfOpen, true);
+	
+	function overTopBar(e){
+		if(_overTopBar || _menuOn) return;
+		_overTopBar = true;
+		if(e) e.stopPropagation();
+		_topbar.className = "topbar";
+		_whiteBg.unpack();
+		//console.log("overTopBar");
+		//_burger.className = "burger";
+		//_overBurger = false;
+	}
+	function outTopBar(e){
+		if(_menuOn) return;//Don't hide when opening overlay
+		if(!_overTopBar) return;
+		_overTopBar = false;
+		if(e) e.stopPropagation();
+		//console.log("outTopBar");
+		_topbar.className = "topbar in";
+		_whiteBg.pack();
+	}
+	
+	function hideIfOpen(e){
+//		if(GLB._isMobile) return;
+		_overTopBar = true;
+		outTopBar(e);
+	}
+	function toggleMenu(e){
+		if(e){
+			e.stopPropagation();
+			e.preventDefault();
+		}
+		if(_menuOn){
+			_pinkFullBg.offscreen();
+			_topbar.className = "topbar";
+			TweenLite.killTweensOf(_menuItems);
+			TweenLite.to(_menuItems, .4, {opacity:0, ease:Strong.easeOut, onComplete:menuHidden});
+		}
+		else{
+			_pinkFullBg.fullscreen();
+			if(GLB._isTouch) _whiteBg.unpack();
+			_menu.className = "overlaymenu open";
+			_topbar.className = "topbar menuOpen";
+			_black.style.visibility = "visible";
+			var _d = .3;
+			TweenLite.killTweensOf(_menuItems);
+			TweenLite.to(_menuItems, .6, {delay:_d, opacity:1, ease:Quad.easeOut});
+		}
+		_menuOn = !_menuOn;
+		//console.log("toggleMenu", _menuOn);
+		if(e) return true;
+	}
+	function menuHidden(){
+		_menu.className = "overlaymenu";
+		_black.style.visibility = "hidden";
+		
+		if(GLB._isTouch) _whiteBg.pack(), _topbar.className = "topbar in";
+	}
+	
+	//Routing
+	function clickedMenuItem(e){
+		//Check http
+		var _url = e.currentTarget.getAttribute("href");
+		if(_url.substr(0, 4) != "http"){
+			try{
+				e.preventDefault();
+				e.stopImmediatePropagation();
+			}
+			catch(e){}
+			_router.setUrl(_url);
+		}
+	}
+	
+	var _selectedId = -1, _subselectedId = -1, _newSelectedId = -1, _newSubSelectedId = -1;//Starts at front, so no selected on init
+	function pageChanged(e){
+		//If menu is open, we close it
+		if(_menuOn) toggleMenu(null);
+		//Find menu item to show
+		_url = _router.getUrl();
+		_newSelectedId = -1;
+		for(var i=0;i<_numMenuItems;i++){
+			if(_items[i].ref == _url){
+				_newSelectedId = i;
+				continue;
+			}
+		}
+		if(_newSelectedId == -1){
+			//_newSelectedId = 0; //If we want to select "CASE" item?
+			for(var i=0;i<_numSubMenuItems;i++){
+				if(_subMenuItems[i].ref == _url){
+					_newSubSelectedId = i;
+					continue;
+				}
+			}
+		}
+		else _newSubSelectedId = -1;
+		//console.log("_newSelectedId", _newSelectedId, _selectedId)
+		if(_newSelectedId != _selectedId){
+			//Unselect old
+			if(_selectedId > -1) _items[_selectedId].unselect();
+			_selectedId = _newSelectedId;
+			if(_selectedId > -1) _items[_selectedId].select();
+		}
+		if(_newSubSelectedId != _subselectedId){
+			//Unselect old
+			if(_subselectedId > -1) _subMenuItems[_subselectedId].unselect();
+			_subselectedId = _newSubSelectedId;
+			if(_subselectedId > -1) _subMenuItems[_subselectedId].select();
+		}
+	}
+	GLBEvents(window, "pageChange", pageChanged, true);
+	pageChanged(null);
+}
+function MenuLayer(_parent, _type, _class){
+	var _this = this;
+	var _state = 0;//0=unpacked, 1=packed
+	var _on = false;
+	var _f3d = true;
+	var _me = document.createElement("div");
+	_me.className = _class;
+	if(GLB._iOS) _me.className = _class + " unjagMyEdge";
+	else _me.className = _class;
+	_parent.insertBefore(_me, _parent.firstChild);
+	
+	var _angleRad = 0, _angle = 0, _angleClosed = 0, _tfo = "0px 0px", _moveY = 0;
+	_this.resized = function(_lH, _rH, _lCH, _rCH, _offsetY){
+		_me.style.height = _lH + "px"; //This is the highest value
+		_me.style.width = GLB._vw + 24 + "px";//hardcoded!
+		//Unpacked state
+		_tfo = "0px "+_lH+"px";
+		var a = _lH - _rH, b = GLB._vw;
+		var c = Math.sqrt(Math.pow(a, 2) + Math.pow(b, 2));
+		_angleRad = Math.acos(b/c);
+		_angle = - _angleRad*180/Math.PI;
+		//console.log("Deg:", a, b, c, _angleRad, _angleDeg)
+		if(_state == 0) TweenLite.set(_me, {rotation:_angle, force3D:_f3d, transformOrigin:_tfo});
+		
+		//Packed state
+		_moveY = _lH-_lCH;
+		a = _lCH - _rCH, b = GLB._vw;
+		c = Math.sqrt(Math.pow(a, 2) + Math.pow(b, 2));
+		_angleRad = Math.acos(b/c);
+		_angleClosed = - _angleRad*180/Math.PI;
+		
+		if(_type == 1){
+			//Fullscreen menu overlay
+			_moveY = -(_lH-_offsetY-1);
+			if(!_on) TweenLite.set(_me, {y:_moveY, force3D:_f3d, transformOrigin:_tfo});
+			else TweenLite.set(_me, {rotation:0, y:0, force3D:_f3d});
+		}
+		else{
+			if(_state == 0){
+				TweenLite.killTweensOf(_me);
+				TweenLite.set(_me, {rotation:_angle, y:0, force3D:_f3d, transformOrigin:_tfo});
+			}
+		}
+	}
+	
+	_this.pack = function(){
+		if(_state == 1) return;
+		_state = 1;
+		TweenLite.killTweensOf(_me);
+		TweenLite.to(_me, .3, {rotation:_angleClosed, y:-_moveY, force3D:_f3d, transformOrigin:_tfo, ease:Quad.easeOut});
+	}
+	_this.unpack = function(){
+		_state = 0;
+		TweenLite.killTweensOf(_me);
+		TweenLite.to(_me, .3, {rotation:_angle, y:0, force3D:_f3d, transformOrigin:_tfo, ease:Quad.easeOut});
+	}
+	
+	_this.fullscreen = function(){
+		_on = true;
+		TweenLite.killTweensOf(_me);
+		TweenLite.set(_me, {autoAlpha:1});
+		TweenLite.to(_me, .4, {rotation:0, y:0, force3D:_f3d, transformOrigin:_tfo, ease:Cubic.easeOut});
+	}
+	_this.offscreen = function(){
+		_on = false;
+		TweenLite.killTweensOf(_me);
+		TweenLite.to(_me, .4, {rotation:_angle, y:_moveY, force3D:_f3d, transformOrigin:_tfo, ease:Cubic.easeInOut});
+		TweenLite.set(_me, {autoAlpha:0, delay:.4});
+	}
+}
+
+function MenuItem(_me){
+	var _this = this;
+	var _selected = false;
+	_this.ref = _me.getAttribute("href") || "";
+	var _baseClass = _me.className;
+	
+	var _bg = document.createElement("div");
+	_bg.className = "bg";
+	var _border = document.createElement("div");
+	_border.className = "border";
+	_bg.appendChild(_border);
+	_me.appendChild(_bg);
+	
+	//Interaction
+	function clickedMenuItem(e){
+		try{
+			e.preventDefault();
+			e.stopImmediatePropagation();
+		}
+		catch(e){}
+		if(_selected) return;
+		_me.dispatchEvent(GLBCustomEvent("clickEvent", 0));
+	}
+	if(_this.ref.substr(0,4) != "http"){
+		GLBEvents(_me, "touchstart", clickedMenuItem, true);
+		GLBEvents(_me, "click", clickedMenuItem, true);
+	}
+	
+	_this.select = function(){
+		_selected = true;
+		_me.className = _baseClass + " selected";
+	}
+	_this.unselect = function(){
+		_selected = false;
+		_me.className = _baseClass;
+	}
+}
+function SubMenuItem(_id, _me){
+	var _this = this;
+	var _selected = false;
+	_this.ref = _me.getAttribute("href") || "";
+	var _baseClass = _me.className;
+	
+	var _nr = document.createElement("div");
+	_nr.className = "num";
+	_nr.textContent = "0" + (_id+1) + ".";
+	_me.insertBefore(_nr, _me.firstChild);
+	
+	var _border = document.createElement("div");
+	_border.className = "border";
+	_me.insertBefore(_border, _me.firstChild);
+	
+	//Interaction
+	function clickedMenuItem(e){
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		if(_selected) return;
+		_me.dispatchEvent(GLBCustomEvent("clickEvent", 0));
+	}
+	if(_this.ref.substr(0,4) != "http"){
+		GLBEvents(_me, "touchstart", clickedMenuItem, true);
+		GLBEvents(_me, "click", clickedMenuItem, true);
+	}
+	
+	_this.select = function(){
+		_selected = true;
+		_me.className = _baseClass + " selected";
+	}
+	_this.unselect = function(){
+		_selected = false;
+		_me.className = _baseClass;
+	}
+}
+function CloseArrow(_menu){
+	var _this = this;
+	var _me = document.createElement("div");
+	_me.className = "closeArrow";
+	var _lineA = document.createElement("div");
+	_lineA.className = "line a";
+	var _lineB = document.createElement("div");
+	_lineB.className = "line b";
+	TweenLite.set(_lineB, {rotation:90, x:17, y:-15, force3D:false, transformOrigin:"0 0"});
+	
+	_me.appendChild(_lineA);
+	_me.appendChild(_lineB);
+	_menu.appendChild(_me);
+	
+	function over(e){
+		console.log("over");
+		TweenLite.to(_me, .3, {scale:1.1, force3D:false, ease:Strong.easeOut});
+	}
+	function out(e){
+		console.log("out");
+		TweenLite.to(_me, .3, {scale:1, force3D:false, ease:Strong.easeOut});
+	}
+	function addListeners(){
+		if(!GLB._isTouch){
+			GLBEvents(_me, "mouseenter", over, true);
+			GLBEvents(_me, "mouseleave", out, true);
+		}
+	}
+	function removeListeners(){
+		if(!GLB._isTouch){
+			GLBEvents(_me, "mouseenter", over, false);
+			GLBEvents(_me, "mouseleave", out, false);
+		}
+	}
+	
+	_this.animIn = function(){
+		TweenLite.set(_me, {scale:1, force3D:false});
+		TweenLite.set(_lineA, {scaleX:.1, opacity:0, force3D:false, transformOrigin:"0 0"});
+		TweenLite.set(_lineB, {scaleX:.1, opacity:0, force3D:false, transformOrigin:"0 0"});
+		TweenLite.to(_lineA, .3, {scaleX:1, opacity:1, delay:.9, force3D:false, ease:Strong.easeOut, transformOrigin:"0 0"});
+		TweenLite.to(_lineB, .4, {scaleX:1, opacity:1, delay:1.05, force3D:false, ease:Strong.easeOut, transformOrigin:"0 0", onComplete:addListeners});
+	}
+	_this.animOut = function(){
+		removeListeners();
+		TweenLite.to(_lineA, .2, {scaleX:.1, opacity:0, force3D:false, ease:Strong.easeOut, transformOrigin:"0 0"});
+		TweenLite.to(_lineB, .4, {scaleX:.1, opacity:0, force3D:false, ease:Strong.easeOut, transformOrigin:"0 0"});
+	}
+	_this._instance = _me;
+}

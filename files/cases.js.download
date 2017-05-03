@@ -1,0 +1,2642 @@
+/*
+Primary:
+
+Secondary:
+- Alle breakpoints skal være halve tal (1200->1199.5)
+- Performance increase hvis display:none på cases uden for skærmen (ved åben case mobil), ulempe er at splittext ikke virker.
+*/
+
+function Cases(_content, _className){
+	var _this = this;
+	var _container = _content.getElementsByClassName(_className)[0];
+	_this._url = _container.getAttribute("data-url") || "";
+	var _built = false;
+	var _modules = [], _numModules = 0;
+	
+	var _casesHTML = _container.getElementsByClassName("case");
+	var _numModules = _casesHTML.length;
+	var _animInOverTimer;
+	
+	_this.activate = function(_match){
+		//console.log("activate CASES");
+		_scrollNav.setState(0); //Horizontal scroll
+		if(!_built){
+			_built = true;
+			for(var i=0;i<_numModules;i++) _modules.push(new Case(i, _numModules, _casesHTML[i], _container, _content));
+		}
+		for(var i=0;i<_numModules;i++) _modules[i].activate();
+		_container.style.display = "block";
+		GLBEvents(window, "resize", resized, true);
+		resized(null);
+		//Navigation
+	    if(!GLB._isMobile && !_leftA){
+			_leftA = new CaseGalleryArrow(-1, _container, _container, "#df475c", true);
+			_rightA = new CaseGalleryArrow(1, _container, _container, "#df475c", true);
+	    }
+		if(_match.length > 2){
+			if(_firstTimeCases) _openTime = 0;
+			_this.subpageChange(_match);//Go directly to case (deeplinked)
+			_openTime = _realOpenTime;
+		}
+		else if(_firstTimeCases){
+			//console.log("Show intro page");
+			_scrollNav.disableForNativescroll();
+			if(GLB._supportsAutoPlay) _intro = new CasesIntro(_container, animInCases), _animInOverTimer = setTimeout(animInOver, _introTime+800);
+			else animInCases(), _animInOverTimer = setTimeout(animInOver, 800);
+		}
+		_firstTimeCases = false;
+	}
+	function animInOver(){
+		_scrollNav.setState(0);
+		frontAddListeners(0);
+	}
+	
+	function frontAddListeners(_delay){
+		if(_leftA) _leftA.animIn(_delay+.2), _rightA.animIn(_delay+.22);
+		GLBEvents(_container, "GLBSwipe", swiped, true);
+		GLBEvents(document, "keydown", keydown, true);
+	}
+	function frontRemoveListeners(){
+		if(_leftA) _leftA.animOut(), _rightA.animOut();
+		GLBEvents(_container, "GLBSwipe", swiped, false);
+		GLBEvents(document, "keydown", keydown, false);
+	}
+	function keydown(e){
+		//console.log(e.keyCode, e);
+		if(e.keyCode == 39 || e.keyCode == 37) e.preventDefault()
+		else return;
+		if(e.keyCode == 39) _container.dispatchEvent(GLBCustomEvent("GLBSwipe", 1));
+		else _container.dispatchEvent(GLBCustomEvent("GLBSwipe", -1));
+	}
+	function swiped(e){
+		_scrollNav.swipeX(GLB._caseW*e.detail*-1);
+    }
+	
+	
+	_this.deactivate = function(){
+		clearTimeout(_animInOverTimer);
+		//console.log("deactivate CASES");
+		if(_built){
+			for(var i=0;i<_numModules;i++) _modules[i].deactivate();
+		}
+		GLBEvents(window, "resize", resized, false);
+		_container.style.display = "none";
+		//Check for closing any open cases
+		if(_openId != -1){
+			for(var i=0;i<_numModules;i++) _modules[i].instantClosed(false, 0);
+			_openId = -1;
+		}
+	}
+	
+	function resized(e){
+		manageContainer();
+		if(_built){
+			for(var i=0;i<_numModules;i++) _modules[i].resized();
+		}
+		_scrollNav.setLimitX(Math.min(-GLB._caseW*_numModules + GLB._vw, 0));
+	}
+	function manageContainer(){
+		if(GLB._isMobile && _openId > -1) _container.style.height = "auto", _container.style.position = "relative";
+		else _container.style.height = GLB._relH + "px", _container.style.position = "absolute";
+	}
+	
+	var _openId = -1;//, _closeOldNeighbourTimer;
+	_this.subpageChange = function(_match){
+		//console.log("Cases subpageChange");
+		//clearTimeout(_closeOldNeighbourTimer);
+		TweenLite.killDelayedCallsTo(openComplete);
+		//Find the case to open
+		for(var i=0;i<_numModules;i++){
+			if(_modules[i]._url == _match){
+				//console.log("Found match. Current openID:", _openId);
+				if(_openId != -1){
+					//console.log("Going from case to case");
+					//Wait before instantClosed is called on open case, and first we animate in the new case
+					if(GLB._isMobile){
+						_modules[_openId].instantClosed(false, 0);
+						_openId = i;
+						openCase();
+					}
+					else{
+						_modules[_openId].freezeAsNeighbour();
+						_modules[i].openAsNeighbour(_openId);
+						TweenLite.delayedCall(_openTime, openComplete, [i]);
+						//_closeOldNeighbourTimer = setTimeout(openComplete, _openTime*1000, i);
+					}
+				}
+				else{
+					_openId = i;
+					openCase();
+					frontRemoveListeners();
+				}
+				//to-do fast browsing with browser history
+				return;
+			}
+		}
+		//console.log("No match in subpages, close open case.");
+		//Check for closing any open cases
+		if(_openId != -1) closeCase();
+	}
+	var _leftA, _rightA;
+	function openCase(){
+		_scrollNav.setState(1); //Vertical scroll
+		_modules[_openId].open();
+		//Move neighbours
+		for(var i=0;i<_numModules;i++) _modules[i].moveOut(_openId);
+		//Set height
+		manageContainer();
+		//Hide topbar
+		window.dispatchEvent(GLBCustomEvent("hideMenu", 0));
+	}
+	//Neighbour case has been animated into screen
+	function openComplete(_newId){
+		//Close old
+		_modules[_openId].instantClosed(true, _newId);
+		_openId = _newId;
+		_modules[_openId].buildAfterNeighbourLoad();
+		_fastClosing = false;
+	}
+	function closeCase(){
+		if(!GLB._isMobile && Math.abs(_scrollNav.getScrollY()) > GLB._relH) _fastClosing = true, _scrollNav.toTop(1, closeCaseB); //Tween to top first
+		else if(!GLB._isMobile && Math.abs(_scrollNav.getScrollY()) > 2) _fastClosing = true, _scrollNav.toTop(.4, closeCaseB); //Tween to top first
+		else closeCaseB();
+	}
+	function closeCaseB(){
+		_fastClosing = false;
+		frontAddListeners(_openTime);
+		_scrollNav.setState(0); //Horizontal scroll
+		//Move neighbours back into screen
+		var _closeX = _modules[_openId].close();
+		for(var i=0;i<_numModules;i++) _modules[i].moveIn(_openId, _closeX);
+		_openId = -1;
+	}
+	
+	function animInCases(){
+		var _d = 0;
+		if(!GLB._supportsAutoPlay) _d = .4;
+		for(var i=0;i<_numModules;i++) _modules[i].animIn(_d);
+	}
+}
+function CasesIntro(_container, _onComplete){
+	var _this = this;
+	var _intro = document.createElement("div");
+	_intro.className = "intro";
+	var _videoHolder = document.createElement("div");
+	_videoHolder.className = "introVideo";
+	var _innerGlow = document.createElement("div");
+	_innerGlow.className = "innerGlow";
+	var _video = document.createElement("video");
+	_video.preload = "meta";
+	//_video.autoPlay = true;
+	_video.controls = !GLB._supportsAutoPlay;
+	_video.loop = false;
+	_video.muted = true;
+	_video.setAttribute('playsinline', 'true'); // must be set before src is set or it will be ignored
+	_video.playsinline = true;
+	var _srcMp4 = document.createElement("source");
+	_srcMp4.type = "video/mp4";
+	if(GLB._isMobile) _srcMp4.src = "Media/static/intro_mobile.mp4";
+	else _srcMp4.src = "Media/static/intro.mp4";
+	_video.appendChild(_srcMp4);
+	_videoHolder.appendChild(_video);
+	_videoHolder.appendChild(_innerGlow);
+	_intro.appendChild(_videoHolder);
+	_container.appendChild(_intro);
+	_video.play();
+	//setTimeout(_onComplete, 5200);
+	setTimeout(completed, _introTime);
+	
+	function completed(){
+		_video.pause();
+		_container.removeChild(_intro);
+		_onComplete();
+		if(GLB._isSafari) setTimeout(gb, _openTime*1000+800);
+		else gb();
+	}
+	function gb(){
+		_intro.removeChild(_videoHolder);
+		_videoHolder.removeChild(_video);
+		_videoHolder.removeChild(_innerGlow);
+		_video.src = "";
+		_video = null;
+		_intro = null;
+	}
+}
+/* Base for each case. This manages both the frontpage (block layout) and entire case page */
+function Case(_id, _numCases, _me, _parent, _content){
+	var _this = this;
+	var _state = 0; //0=closed (front), 1=open (case view)
+	var _baseX = 0; //Base position, based on ID
+	var _built = false;
+	var _modules = [], _numModules = 1;
+	
+	//Always start with a CaseTop - this is not optional
+	_modules.push(new CaseTop(_id, _numCases, _me));
+	_this._url = _modules[0]._url;
+		
+	//Handle Cases on/off
+	_this.activate = function(){
+		GLBEvents(_content, "scrolledX", moveX, true);
+	}
+	_this.deactivate = function(){
+		GLBEvents(_content, "scrolledX", moveX, false);
+		GLBEvents(_content, "scrolledY", moveY, false);
+		GLBEvents(window, "scroll", scrolledMobile, false);
+		GLBEvents(_me, "updateSiblings", siblingLayout, false);
+	}
+	function moveX(e){
+		if(_state == 1) return;
+		_modules[0].moveX(_baseX+e.detail);
+	}
+	function moveY(e){
+		for(var i=0;i<_numModules;i++) _modules[i].moveY(e.detail);
+	}
+	function scrolledMobile(e){
+		for(var i=0;i<_numModules;i++) _modules[i].moveY(GLB._windowScrollY);
+	}
+	
+	_this.open = function(){
+		_state = 1;
+		_me.className = "case open";
+		_modules[0].open(true);
+		build();
+		activateModules();
+		if(GLB._isMobile) _me.style.top = 0 + "px"
+		else _me.style.top = GLB._menuClosedH + "px";
+	}
+	function build(){
+		if(!_built){
+			_built = true;
+			var _sections = _me.getElementsByTagName("section");
+			_numModules = _sections.length+1;
+			for(var i=1;i<_numModules;i++) _modules.push(getModule("case", _sections[i-1].className, _me, _sections[i-1]));
+			_modules.push(getModule("case", "end", _me));
+			_numModules++;
+		}
+	}
+	function activateModules(){
+		clearTimeout(_hideTimer), setDisplay("visible");
+		for(var i=1;i<_numModules;i++) _modules[i].activate();
+		GLBEvents(window, "LayoutUpdate", layoutUpdated, true);
+		setTimeout(resizeAndLayout, 100); //Needed for text backgrounds, Splittext must have been called first.
+		manageListeners();
+	}
+	function resizeAndLayout(){
+		_this.resized(null);
+		layoutUpdated(null);
+	}
+	_this.close = function(){
+		closing();
+		return _modules[0].close();
+	}
+	function closing(){
+		GLBEvents(window, "LayoutUpdate", layoutUpdated, false);
+		GLBEvents(_content, "scrolledY", moveY, false);
+		GLBEvents(window, "scroll", scrolledMobile, false);
+		GLBEvents(_me, "updateSiblings", siblingLayout, false);
+		document.body.style.overflowY = "hidden";
+		_me.className = "case";
+		_lastState = "unset";
+		_state = 0;
+		moveY({detail:0}); //Reset vertical position
+		_me.style.top = GLB._reliableSh + "px"; //Move down instantly
+		for(var i=1;i<_numModules;i++) _modules[i].deactivate();
+	}
+	_this.getX = function(){
+		return _modules[0].getX();
+	}
+	var _hideTimer;
+	_this.moveOut = function(_openId){
+		_modules[0].moveOut(_openId);
+		if(_openId != _id) _hideTimer = setTimeout(setDisplay, _openTime*1000 + 10, "hidden");
+	}
+	_this.moveIn = function(_openId, _closeX){
+		clearTimeout(_hideTimer), setDisplay("visible");
+		_modules[0].moveIn(_openId, _closeX);
+	}
+	_this.animIn = function(_d){
+		_modules[0].animIn(_d);
+	}
+	_this.instantClosed = function(_moveOut, _openId){
+		clearTimeout(_hideTimer), setDisplay("visible");
+		if(_state == 1) closing();
+		_modules[0].instantClosed(_moveOut, _openId);
+	}
+	_this.openAsNeighbour = function(_prevId){
+		//console.log("openAsNeighbour", _id);
+		_state = 1;
+		_me.style.zIndex = 2;
+		_me.className = "case open";
+		_modules[0].open(false, _prevId);
+		if(GLB._isMobile) _me.style.top = 0 + "px"
+		else _me.style.top = GLB._menuClosedH + "px";
+	}
+	_this.freezeAsNeighbour = function(){
+		_me.style.zIndex = 1;
+	}
+	_this.buildAfterNeighbourLoad = function(){
+		console.log("buildAfterNeighbourLoad", _id)
+		_me.style.zIndex = 1;
+		_lastState = "unset";
+		build();
+		activateModules();
+	}
+	function setDisplay(_v){
+		_me.style.visibility = _v;
+	}
+	//Switch between mobile/desktop listeners
+	var _lastState = "unset";
+	function manageListeners(){
+		if(GLB._isMobile && _lastState == true) return;
+		else if(!GLB._isMobile && _lastState == false) return;
+		_lastState = GLB._isMobile;
+		if(GLB._isMobile){
+			GLBEvents(_content, "scrolledY", moveY, false);
+			GLBEvents(window, "scroll", scrolledMobile, true);
+			document.body.style.overflowY = "auto";
+			_scrollNav.disableForNativescroll();
+			GLBEvents(_me, "updateSiblings", siblingLayout, true);
+			scrolledMobile(null);
+		}
+		else{
+			if(_state == 1) _me.className = "case open";
+			else _me.className = "case";
+			GLBEvents(_content, "scrolledY", moveY, true);
+			GLBEvents(window, "scroll", scrolledMobile, false);
+			_scrollNav.setState(1); //Vertical scroll
+			document.body.style.overflowY = "hidden";
+		}
+		window.scrollTo(0,0);
+	}
+	
+	//Write
+	_this.resized = function(){
+		if(_state == 0) _me.style.top = GLB._reliableSh + "px";
+		else{
+			if(GLB._isMobile) _me.style.top = 0 + "px"
+			else _me.style.top = GLB._menuClosedH + "px";
+			manageListeners();
+		}
+		_baseX = GLB._caseW*_id;
+		for(var i=0;i<_numModules;i++) _modules[i].resized();
+	}
+	//Read
+	function siblingLayout(e){
+		//Find the dispatching module and start from there:
+		var _modId = 0;
+		for(var i=2;i<_numModules-1;i++){
+			if(_modules[i].ref == e.target){
+				_modId = i;
+				//console.log("Found id:", i);
+				continue;
+			}
+		}
+		//Get all heights
+		var _accuH = 0;
+		for(i=0;i<_numModules;i++){
+			if(i > 0) _modules[i]._offsetY = _accuH;
+			if(i >= _modId) _modules[i].layoutUpdated();
+			_accuH += _modules[i]._h;
+		}
+		_scrollNav.setLimitY(-(_accuH-GLB._relH));
+	}
+	//Read
+	function layoutUpdated(e){
+		//Get all heights
+		var _accuH = 0;
+		for(var i=0;i<_numModules;i++){
+			if(i > 0) _modules[i]._offsetY = _accuH;
+			_modules[i].layoutUpdated();
+			_accuH += _modules[i]._h;
+		}
+		_scrollNav.setLimitY(-(_accuH-GLB._relH));
+	}
+}
+
+/* Case top element. This is also used on front page */
+function CaseTop(_id, _numCases, _parent){
+	var _this = this;
+	var _me = _parent.getElementsByClassName("caseTop")[0];
+	_this._url = _me.getAttribute("href") || "";
+	_this._h = GLB._relH*2;
+	_this._offsetY = GLB._relH;
+	var _introOn = true;
+	var _hLeft = 160, _hRight = 80;
+	if(/*GLB._reliableSh < 500 || */GLB._isMobile) _hLeft = 80, _hRight = 64;
+	else if(GLB._reliableSh < 700) _hLeft = 140, _hRight = 80;
+	var _casesOnScren = 3/.95;
+	var _introDif = (_hLeft - _hRight)/_casesOnScren;
+	var _whiteMask = document.createElement("canvas");
+	var _whiteMaskCtx = _whiteMask.getContext("2d");
+	_whiteMask.style.height = GLB._relH+_introDif + "px"
+	redrawIntroMask();
+	_whiteMask.className = "whiteMask";
+	_me.appendChild(_whiteMask);
+	function redrawIntroMask(){
+		_whiteMask.width = GLB._caseW, _whiteMask.height = GLB._relH+_introDif;
+		_whiteMaskCtx.fillStyle = "#f3f3f3";
+		_whiteMaskCtx.beginPath();
+		_whiteMaskCtx.moveTo(0,0);
+		_whiteMaskCtx.lineTo(GLB._caseW, 0);
+		_whiteMaskCtx.lineTo(GLB._caseW, GLB._relH);
+		_whiteMaskCtx.lineTo(0, GLB._relH + _introDif);
+		_whiteMaskCtx.lineTo(0, 0);
+		_whiteMaskCtx.fill();
+	}
+	function removeIntro(){
+		if(!_introOn) return;
+		_introOn = false;
+		_me.removeChild(_whiteMask);
+	}
+	
+	var _w, _h, _layersX = 0, _relation, _scaleDown = 1, _tilt = 0;
+	var _f3dMe = false;
+	var _f3dLayers = false;
+	var _f3dImg = true;
+	//if(GLB._isTouch) _f3dMe = true, _f3dImg = true;
+	if(GLB._isTouch) _f3dMe = true, _f3dImg = false;//IMPORTANT for iPad performance
+	
+	//Text
+	var _labels = new LabelWithBg(_me, _parent, _id, _numCases);
+	
+	//Image layers
+	var _layers = document.createElement("div");
+	_layers.className = "layers";
+	_me.insertBefore(_layers, _me.firstChild);
+	var _bgUrl = _parent.getAttribute("data-bg"), _fgUrl = _parent.getAttribute("data-fg");
+	
+	//to-do fix urls when backend is ready:
+	if(GLB._isMobile) _bgUrl += "_mobile", _fgUrl  += "_mobile";
+	else if(GLB._isTouch) _bgUrl += "_ld", _fgUrl  += "_ld";
+	var _bgImg = new GLBImage(_bgUrl+".jpg", _layers, null, null, "img", bgLoaded, true);
+	var _bgLoaded = false;
+	_bgImg.load();
+	var _fgImg = new GLBImage(_fgUrl+".png", _layers, null, null, "img", fgLoaded);
+	var _fgLoaded = false;
+	_fgImg.load();
+	var _align = _parent.getAttribute("data-align") || ""; //Two letters, first is alignment for closed (frontpage) and second is alignment for open state.
+	var _alignClosed = _align.substr(0,1), _alignOpen = _align.substr(1,2);
+	var _pan = _parent.getAttribute("data-pan") || "xy";
+	var _doPanX = (_pan=="xy" || _pan=="x"), _doPanY = (_pan=="xy" || _pan=="y");
+	var _outAligned = "";
+	
+	function bgLoaded(e){
+		_bgLoaded = true;
+		_relation = _bgImg.getH()/_bgImg.getW();
+		_this.resized();
+		addListeners();
+	}
+	function fgLoaded(e){
+		_fgLoaded = true;
+		if(_bgLoaded) _this.resized();
+	}
+	
+	//Check for video (and show play button along with centered content)
+	var _yt = _me.getAttribute("data-yt") || "";
+	var _isMovie = false;
+	var _playBtn;
+	if(_yt != ""){
+		_playBtn = new CaseVideoBtn(_parent, (_me.getAttribute("data-btn") || ""), clickedPlayBtn, _parent.getAttribute("data-color") || "initial");
+		_playBtn._offsetY = GLB._relH*.05;
+		_playBtn.moveY(0);
+		_isMovie = true;
+		_me.className = "caseTop movie";
+	}
+	function clickedPlayBtn(e){
+		e.preventDefault();
+		e.stopPropagation();
+		if(!_ytPlayer) _ytPlayer = new CaseVideoPlayer();
+		_ytPlayer.load(_yt, _playBtn._instance);
+	}
+	
+	_this.resized = function(){
+		_me.style.height = GLB._relH + "px";
+		if(_playBtn){
+			if(GLB._isMobile) _playBtn.makeRelative();
+			else _playBtn.resetPosition();
+		}
+		if(_open) _me.style.top = 0 + "px";
+		else _me.style.top = -GLB._relH + "px", _me.style.width = GLB._caseW + "px";
+		if(_open && _allowY) _me.style.width = GLB._vw + "px";
+		if(_movedOut){
+			if(_outAligned == "left") _meX = _this._outX = - GLB._caseW;
+			else if(_outAligned == "right") _meX = _this._outX = GLB._vw
+			TweenLite.set(_me, {x:_meX, force3D:_f3dMe});
+		}
+		if(_bgLoaded){
+			_w = GLB._vw;
+			_h = _w * _relation;
+			if(_h < GLB._relH){
+				_h = GLB._relH;
+				_w = _h/_relation;
+			}
+			_layers.style.width = _w + "px", _layers.style.height = _h + "px";
+			//Scale down
+			_scaleDown = Math.max(GLB._caseW/_w, GLB._relH/_h);
+			//console.log(_scaleDown);
+			if(!_open) TweenLite.set(_layers, {scale:_scaleDown, transformOrigin:"0 0", force3D:_f3dLayers});
+			//Align
+			if(_alignClosed == "r") _layersX = GLB._caseW-_w*_scaleDown;
+			else if(_alignClosed == "c") _layersX = GLB._caseW*.5-(_w*_scaleDown)*.5;
+			if(!_open) TweenLite.set(_layers, {x:_layersX, transformOrigin:"0 0", force3D:_f3dLayers});
+		}		
+		_labels.resized();
+		if(_isMovie) _playBtn._offsetY = GLB._relH*.05;
+	}
+	_this.layoutUpdated = function(){
+		if(GLB._isMobile) _this._h = GLB._relH;
+		else _this._h = GLB._relH*2;
+	}
+	
+	//Force render for GPU upload
+	TweenLite.set(_bgImg.img, {x:0, force3D:_f3dImg});
+	TweenLite.set(_fgImg.img, {x:0, force3D:_f3dImg});
+	
+	var _panX = 0, _panY = 0, _tweenedPanX = 0, _tweenedPanY = 0;
+	var _isHidden = false;
+	_this.moveX = function(_x){
+		if(_open) return;
+		if(_movedOut) _meX = _this._outX;
+		else _meX = _x;
+		TweenLite.set(_me, {x:_meX, force3D:_f3dMe});
+		//Pan hover
+		if(_over && !_movedOut && _bgLoaded && _fgLoaded){
+			_panX = _mx - GLB._caseW*.5, _panY = _my - GLB._relH*.5;
+			if(_doPanX) _tweenedPanX += (_panX-_tweenedPanX)*_this._hoverSpeed;
+			if(_doPanY) _tweenedPanY += (_panY-_tweenedPanY)*_this._hoverSpeed;
+			TweenLite.set(_bgImg.img, {x:-_tweenedPanX*.05, y:-_tweenedPanY*.025, force3D:_f3dImg});
+			TweenLite.set(_fgImg.img, {x:-_tweenedPanX*.15, y:-_tweenedPanY*.05, force3D:_f3dImg});
+		}
+	}
+	
+	var _allowY = false;
+	var _curH = 0, _newH = 0, _myExtraHeight = 0, _myExtraWidth = 0, _eased = 0, _bgX = 0, _fgX = 0, _percent;
+	_this.moveY = function(_y){
+		if(!_allowY) return;
+		//Percent: 1=scrolled a screen height to move images, >1 changing height of topmodule to show image below (used by wholesale)
+		_percent = Math.abs(_y/GLB._relH);
+		if(!GLB._isMobile){
+			//console.log("Case p", _percent, _isHidden);
+			if(_percent > 2){
+				if(!_isHidden) _isHidden = true, _me.style.visibility = "hidden";
+			}
+			else if(_isHidden) _isHidden = false, _me.style.visibility = "visible";
+
+			if(_isHidden) return;
+			//Align when opened (going into Wholesale)
+			if(_alignOpen == "c") _myExtraWidth = (_w-GLB._vw*0.8);
+			else if(_alignOpen == "l") _myExtraWidth = 0;
+			else if(_alignOpen == "r") _myExtraWidth = (_w-GLB._vw*0.6);
+			_myExtraHeight = (_h-GLB._relH);
+			
+			_eased = easeOutQuad(Math.min(_percent, 1), 0, 1, 1);
+			_bgX = -_myExtraWidth*Math.min(_percent*.25+_eased*.75, 1);
+			_fgX = -_myExtraWidth*Math.min(_percent*.25+_eased*.75, 1)*.95;
+			
+			TweenLite.set(_bgImg.img, {x:_bgX, y:-_myExtraHeight*Math.min(_percent, 1), force3D:_f3dImg});
+			TweenLite.set(_fgImg.img, {x:_fgX, y:-_myExtraHeight*Math.min(_percent, 1)*.95, force3D:_f3dImg});
+
+			_labels.moveY(_y);
+			if(_isMovie) _playBtn.moveY(_y);
+
+			//Mask
+			if(GLB._useClipPath) return; //Clip path is done in WholeSale
+			if(_percent <= 1) _newH = GLB._relH;
+			else if(_percent >= 2) _newH = 0;
+			else if(_percent > 1) _newH = GLB._relH*(2-_percent);
+			if(_curH != _newH){
+				_curH = _newH;
+				_me.style.height = _newH + "px";
+			}
+		}
+	}
+	
+	_this.getX = function(){
+		return _meX;
+	}
+	
+	function addListeners(){
+		GLBEvents(_me, "click", clickedMenuItem, true);
+		if(!GLB._isTouch){
+			GLBEvents(_me, "mouseenter", over, true);
+			GLBEvents(_me, "mouseleave", out, true);
+		}
+		else{
+			GLBEvents(_me, "touchstart", touchDown, true);
+			GLBEvents(_me, "touchend", touchUp, true);
+		}
+	}
+	
+	_this._hoverSpeed = 0;
+	var _meX = 0, _mx = 0, _my = 0, _hoverScale = 1.1;
+	var _open = false, _over = false;
+	function clickedMenuItem(e){
+		if(e) e.preventDefault();
+		//e.stopImmediatePropagation();
+		if(_movedOut) return;
+		if(_open) _router.setUrl("/");
+		else _router.setUrl(_this._url);
+	}
+	//Handle touch clicks
+	var _downTime, _downX, _downY;
+	function touchDown(e){
+		if(!GLB._isMobile) e.preventDefault();
+		_downTime = new Date();
+		_downX = e.touches[0].clientX, _downY = e.touches[0].clientY;
+	}
+	function touchUp(e){
+		e.preventDefault();
+		var _timeSinceDown = new Date() - _downTime;
+		var _movedTotal = Math.sqrt(Math.pow(_downX-e.changedTouches[0].clientX, 2) + Math.pow(_downY-e.changedTouches[0].clientY, 2));
+		if(_timeSinceDown < 300 && _movedTotal < 16) clickedMenuItem(null);
+	}
+	
+	function over(e){
+		if(_open || _movedOut) return;
+		_over = true;
+		//console.log("over", _id);
+		_tweenedPanX = _tweenedPanY = 0;
+		TweenLite.to(_layers, .6, {x:_layersX + ((_w*_scaleDown)-(_w*_hoverScale*_scaleDown))*.5, y:((_h*_scaleDown)-(_h*_hoverScale*_scaleDown))*.5, scale:_hoverScale*_scaleDown, force3D:_f3dLayers, transformOrigin:"0 0", ease:Quad.easeOut});
+		_this._hoverSpeed = 0;
+		TweenLite.to(_this, .6, {_hoverSpeed:.1, ease:Quad.easeOut});
+		_labels.over();
+		//Start listening for mouse position
+		GLBEvents(document, "mousemove", movedMouse, true);
+		//Z-index to avoid white subpixel bug in Chrome
+		_parent.style.zIndex = 0;
+	}
+	function out(e){
+		if(_open || _movedOut) return;
+		_over = false;
+		_labels.out();
+		TweenLite.to(_layers, .6, {x:_layersX, y:0, scale:1*_scaleDown, force3D:_f3dLayers, transformOrigin:"0 0", ease:Quad.easeOut});
+		TweenLite.to(_bgImg.img, .6, {x:0, y:0, force3D:_f3dImg, ease:Quad.easeOut});
+		TweenLite.to(_fgImg.img, .6, {x:0, y:0, force3D:_f3dImg, ease:Quad.easeOut});
+		outReset();
+		_parent.style.zIndex = 1;
+		//console.log("out", _id);
+	}
+	function outReset(){
+		_mx = GLB._caseW*.5, _my = GLB._relH*.5;
+		GLBEvents(document, "mousemove", movedMouse, false);
+	}
+	
+	function movedMouse(e){
+		_mx = e.clientX - _meX, _my = e.clientY-GLB._menuClosedH;
+	}
+	
+	_this.open = function(_fromFront, _prevId){
+		_open = true, _over = false;
+		_allowY = _movedOut = false;
+		if(_firstTimeCases && _whiteMask) TweenLite.to(_whiteMask, 1.0, {y:-(GLB._relH+_introDif), delay:.8, ease:Cubic.easeInOut, force3D:true, transformOrigin:"0 0", onComplete:removeIntro});
+		else removeIntro();
+		_me.style.top = 0 + "px";
+		if(!_fromFront){
+			if(_id > _prevId) TweenLite.set(_me, {x:GLB._vw, transformOrigin:"0 0", force3D:_f3dMe});
+			else TweenLite.set(_me, {x:-GLB._caseW, transformOrigin:"0 0", force3D:_f3dMe});
+		}
+		_isHidden = false, _me.style.visibility = "visible", _outAligned = "";
+		TweenLite.to(_layers, _openTime, {x:0, y:0, scale:1, transformOrigin:"0 0", force3D:_f3dLayers, ease:Cubic.easeInOut});
+		TweenLite.to(_me, _openTime, {x:0, width:GLB._vw, transformOrigin:"0 0", ease:Cubic.easeInOut, force3D:_f3dMe});
+		if(GLB._isMobile){
+			_myExtraWidth = (_w-GLB._vw);
+			if(!_myExtraWidth) _myExtraWidth = (GLB._relH-GLB._vw); //Assume the images are rectangular
+			if(_myExtraWidth < 0) _myExtraWidth = 0;
+			TweenLite.to(_bgImg.img, _openTime, {x:-_myExtraWidth*.5, y:0, force3D:_f3dImg, ease:Cubic.easeInOut});
+			TweenLite.to(_fgImg.img, _openTime, {x:-_myExtraWidth*.54, y:0, force3D:_f3dImg, ease:Cubic.easeInOut, onComplete:openOver});
+		}
+		else{
+			TweenLite.to(_bgImg.img, _openTime, {x:0, y:0, force3D:_f3dImg, ease:Cubic.easeInOut});
+			TweenLite.to(_fgImg.img, _openTime, {x:0, y:0, force3D:_f3dImg, ease:Cubic.easeInOut, onComplete:openOver});
+		}
+		_labels.hide();
+		outReset();
+		if(_isMovie) _playBtn.animIn(_openTime+.2);
+	}
+	function openOver(){
+		_allowY = true;
+		orientationTilt();
+		//if(_isMovie) _playBtn._offsetY = GLB._relH*.05;
+	}
+	
+	_this.close = function(){
+		_allowY = false;
+		_me.style.top = -GLB._relH + "px";
+		var _newX = newX();
+		_parent.dispatchEvent(GLBCustomEvent("updateScrollX", (GLB._caseW*_id - _newX)));
+		if(GLB._isMobile){
+			TweenLite.to(_bgImg.img, _closeTime, {x:0, force3D:_f3dImg, ease:Cubic.easeInOut});
+			TweenLite.to(_fgImg.img, _closeTime, {x:0, force3D:_f3dImg, ease:Cubic.easeInOut});
+			window.removeEventListener('deviceorientation', tilt, true);
+	        window.removeEventListener('orientationchange', tilt, true);
+			TweenLite.ticker.removeEventListener('tick', panMobile);
+		}
+		TweenLite.to(_layers, _closeTime, {x:_layersX, y:0, scale:_scaleDown, transformOrigin:"0 0", force3D:_f3dLayers, ease:Cubic.easeInOut});
+		TweenLite.to(_me, _closeTime, {x:_newX, width:GLB._caseW, transformOrigin:"0 0", ease:Cubic.easeInOut, force3D:_f3dMe, onComplete:closeOver});
+		_labels.show(_closeTime);
+		if(_isMovie) _playBtn.animOut();
+		return _newX;
+	}
+	function newX(){
+		var _newX = Math.floor(GLB._vw*.5-GLB._caseW*.5);
+		if(_newX > _id * GLB._caseW) _newX = _id * GLB._caseW;
+		//Where is the last case going to be
+		var _lastX = _newX + (_numCases-_id) * GLB._caseW;
+		if(_lastX < GLB._vw){
+			_lastX = GLB._vw;
+			_newX = _lastX - (_numCases-_id) * GLB._caseW;
+		}
+		return _newX;
+	}
+	_this.instantClosed = function(_moveOut, _openId){
+		if(_open){
+			var _newX = newX();
+			_me.style.top = -GLB._relH + "px";
+			TweenLite.set(_layers, {x:_layersX, y:0, scale:_scaleDown, transformOrigin:"0 0", force3D:_f3dLayers});
+			TweenLite.set(_me, {x:_newX, width:GLB._caseW, transformOrigin:"0 0", force3D:_f3dMe});
+			if(GLB._isMobile){
+				TweenLite.set(_bgImg.img, {x:0, force3D:_f3dImg});
+				TweenLite.set(_fgImg.img, {x:0, force3D:_f3dImg});
+				window.removeEventListener('deviceorientation', tilt, true);
+		        window.removeEventListener('orientationchange', tilt, true);
+				TweenLite.ticker.removeEventListener('tick', panMobile);
+			}
+			_labels.show(0);
+			if(_isMovie) _playBtn.animOut();
+			_open = false;
+		}
+		else{
+			_outAligned = "", _movedOut = false;
+		}
+		if(_moveOut){
+			_movedOut = true;
+			setToX(_openId);
+			_this._outX = _toX;
+			_this.moveX();
+		}
+	}
+	function closeOver(){
+		_open = false;
+	}
+	
+	_this._outX = 0;
+	var _movedOut = false;
+	_this.moveOut = function(_openId){
+		if(_id == _openId) return;
+		removeIntro();
+		if(_openTime == 0) _labels.animIn(1); //Deeplinked to a case
+		_movedOut = true;
+		setToX(_openId);
+		_this._outX = _meX;
+		TweenLite.to(_this, _openTime, {_outX:_toX, ease:Cubic.easeInOut, onUpdate:_this.moveX});
+	}
+	var _toX = 0;
+	function setToX(_openId){
+		_toX = 0;
+		if(_id < _openId) _toX = -(_openId-_id) * GLB._caseW, _outAligned = "left";
+		else _toX = GLB._vw + (_id-_openId) * GLB._caseW-GLB._caseW, _outAligned = "right";
+	}
+	
+	_this.moveIn = function(_openId, _closeX){
+		if(_id == _openId) return;
+		//Make sure positions are updated
+		setToX(_openId), _meX = _toX;
+		_outAligned = "";
+		//The closing case should always center after close (but check limits)
+		_this._outX = _meX;
+		TweenLite.to(_this, _closeTime, {_outX:_closeX + GLB._caseW*(_id-_openId), ease:Cubic.easeInOut, onUpdate:_this.moveX, onComplete:moveInOver});
+	}
+	function moveInOver(){
+		_movedOut = false;
+	}
+	_this.animIn = function(_d){
+		if((GLB._isMobile && _id > 1) || (!GLB._isMobile && _id > 3)){
+			_labels.animIn(_d+.8+.3*.1);
+			removeIntro();
+		}
+		else{
+			var _delay = _d+_id*.1;
+			if(GLB._supportsAutoPlay){
+				TweenLite.set(_layers, {x:_layersX + ((_w*_scaleDown)-(_w*_hoverScale*_scaleDown))*.5, y:((_h*_scaleDown)-(_h*_hoverScale*_scaleDown))*.5, scale:_hoverScale*_scaleDown, force3D:_f3dLayers, transformOrigin:"0 0", delay:_delay});
+				TweenLite.to(_layers, 1.0, {x:_layersX, y:0, scale:1*_scaleDown, force3D:_f3dLayers, transformOrigin:"0 0", delay:_delay, ease:Quad.easeOut});
+			}
+			TweenLite.to(_whiteMask, .8, {y:-(GLB._relH+_introDif), delay:_delay, ease:Cubic.easeInOut, force3D:true, transformOrigin:"0 0", onComplete:animInOver});
+		}
+	}
+	function animInOver(){
+		removeIntro();
+		_labels.animIn(0);
+	}
+	
+	//Listen for orientation
+	function orientationTilt(){
+		if(GLB._isMobile){
+			_this._hoverSpeed = 0;
+			_tweenedPanX = 0;
+			TweenLite.to(_this, .6, {_hoverSpeed:.1, ease:Quad.easeOut});
+			window.addEventListener('deviceorientation', tilt, true);
+	        window.addEventListener('orientationchange', tilt, true);
+			TweenLite.ticker.addEventListener('tick', panMobile);
+		}
+	}
+	function tilt(e){
+		var beta = e.beta, gamma = e.gamma, orientation = window.orientation;
+		_tilt = 0;
+		if(orientation == -90) _tilt = beta; //left=45, right=-45
+		else if(orientation == 180) _tilt = gamma; //left=45, right=-45
+		else if(orientation == 0) _tilt = -gamma; //left=45, right=-45
+		else if(orientation == 90) _tilt = -beta; //left=45, right=-45
+		if(isNaN(_tilt)) return;
+		_tilt /= 720;
+	}
+	function panMobile(){
+		_panX = GLB._caseW*_tilt;
+		if(_doPanX) _tweenedPanX += (_panX-_tweenedPanX)*_this._hoverSpeed;
+		if(_percent > 2) return;
+		//Only front for best performance
+	//	TweenLite.set(_bgImg.img, {x:-_myExtraWidth*.5-_tweenedPanX*.05, force3D:true});
+		TweenLite.set(_fgImg.img, {x:-_myExtraWidth*.54-_tweenedPanX, force3D:true});
+	}
+}
+
+function CaseWholesale(_parent){
+	var _this = this;
+	_this.ref = _me;
+	var _f3d = false;
+	var _loadInit = false, _loaded = false, _animIn = false;
+	_this._h = GLB._relH;
+	_this._offsetY = GLB._relH;
+	
+	var _me = _parent.getElementsByClassName("wholesale")[0];
+	var _text = _me.getElementsByClassName("centerText")[0];
+	//Set color theme
+	var _themeColor = _parent.getAttribute("data-color") || "initial";
+	_me.style.backgroundColor = _themeColor;
+	TweenLite.set(_me, {x:GLB._vw, force3D:_f3d});
+	var _h1 = new H1WithBg(_me, _me.querySelector("h1"));
+	var _blackDivider = new BlackBar(_text, true);
+	
+	//Sections
+	/*var _sectionsHtml = _me.getElementsByClassName("statement");
+	var _numSections = _sectionsHtml.length;
+	var _sections = [];
+	for(var i=0;i<_numSections;i++) _sections.push(new CaseWholesaleSection(i, _sectionsHtml[i], _me));*/
+	
+	var _imgs = [];
+	var _stepImg;
+	var _bgs = document.createElement("div");
+	_bgs.className = "wholesaleBg";
+	if(GLB._useClipPath) _parent.appendChild(_bgs);
+	else _parent.insertBefore(_bgs, _parent.firstChild);
+	if(!GLB._isMobile) _stepImg = new GLBImage(_me.getAttribute("data-img"), _bgs, null, null, "img", imgLoaded, false);
+	var _imgHidden = true;
+	function imgLoaded(e){
+		_loaded = true;
+		_this.resized();
+	}
+	
+	_this.resized = function(){
+		if(_h1) _h1.resized();
+		if(GLB._isMobile){
+			_me.style.marginTop = _this._offsetY + "px";
+			_me.style.height = "auto";
+			TweenLite.set(_me, {x:0, y:0, force3D:_f3d});
+			show();
+		}
+		else{
+			_me.style.marginTop = "0";
+			_me.style.height = GLB._relH + "px";
+			if(_loaded) _stepImg.scaleTo("fill", GLB._vw*.6, GLB._relH, "center", "center");
+		}
+	}
+	_this.layoutUpdated = function(){
+		if(GLB._isMobile) _this._h = _me.offsetHeight, _me.style.marginTop = _this._offsetY + "px";
+		else _this._h = GLB._relH;
+	}
+	
+	_this.activate = function(){
+		if(_loadInit || GLB._isMobile) return;
+		_loadInit = true;
+		if(_stepImg) _stepImg.load();
+	}
+	
+	_this.deactivate = function(){
+		hide();
+	}
+	function hide(){
+		_hidden = true;
+		if(!_imgHidden && _loaded) _imgHidden = true, _stepImg.img.style.visibility = "hidden";
+		_me.style.visibility = _bgs.style.visibility = "hidden";
+		if(_animIn) _animIn = false, _h1.animOut(true);
+		GLBEvents(document, "stoppedScrolledY", snap, false);
+	}
+	function show(){
+		_hidden = false;
+		_me.style.visibility = _bgs.style.visibility = "visible";
+		if(!GLB._isMobile) GLBEvents(document, "stoppedScrolledY", snap, true);
+	}
+	
+	function snap(e){
+		if(_percent > .5 && _percent < 2) _scrollNav.snapY(Math.abs((_percent-Math.round(_percent))*2)+.3, Math.round(_percent) * -GLB._relH);
+	}
+	var _percent = 0, _eased = 0, _curX = 0, _curY = 0, _newX = 0, _newY = 0, _curH = 0;
+	var _hidden = true;
+	_this.moveY = function(_y){
+		_percent = Math.abs(_y/GLB._relH);
+		//console.log("_percent:", _percent);
+		
+		if(GLB._isMobile){
+			if(!_animIn && _percent > .3) _animIn = true, _h1.animIn(0, true);
+		}
+		else{
+			_eased = easeOutQuad(Math.min(_percent, 1), 0, 1, 1);
+			//X:
+			_newX = GLB._vw-(GLB._vw*.4)*Math.min(_eased, 1);
+			if(_newX != _curX){
+				_curX = _newX;
+				TweenLite.set(_me, {x:_curX, force3D:_f3d});
+			}
+			
+			//Y:
+			if(_percent > 2){
+				_newY = -(Math.min(_percent, 4)-2) * GLB._relH;
+				_newY *= .92;//Parallax effect
+			}
+			else _newY = 0;
+			
+			if(_newY >= -GLB._relH && _percent <= 4){
+				if(_hidden) show();
+			}
+			else if(!_hidden) hide();
+		}
+				
+		if(_hidden) return;
+		if(!GLB._isMobile && !_animIn && _percent > .3) _animIn = true, _h1.animIn(0, true);
+		if(!GLB._isMobile && _curY != _newY){
+			_curY = _newY;
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+			TweenLite.set(_bgs, {y:_newY, force3D:_f3d});
+		}
+		//for(var i=0;i<_numSections;i++) _sections[i].updateP(_percent);
+		
+		if(_imgHidden && _loaded && _percent > .5) _imgHidden = false, _stepImg.img.style.visibility = "visible";
+		
+		if(GLB._isMobile || !GLB._useClipPath) return;
+		if(_percent <= 1) _newH = GLB._relH;
+		else if(_percent >= 2) _newH = 0;
+		else if(_percent > 1) _newH = GLB._relH*(2-_percent);
+		if(_curH != _newH){
+			_curH = _newH;
+			
+			/*var _adjusted = _percent-1;
+			if(_adjusted < 0) _adjusted = 0;
+			else if(_adjusted > 1) _adjusted = 1;
+			var _eased = easeInOutSine(_adjusted, 0, 1, 1);*/
+			//if(_percent > 1 && _percent < 1.5) _eased = _percent + ((_percent-.5)*.1)
+			//else _eased = _percent*1
+			//_bgs.style["clip-path"] = _bgs.style["-webkit-clip-path"] = "polygon(0% "  + (100-(_percent-1)*100) + "%, 100% " + (100-_eased*100) + "%, 100% 100%, 0% 100%)";
+			
+			var _adjusted = (_percent-1)*.1;
+			if(_adjusted < 0) _adjusted = 0;
+			else if(_adjusted > 1) _adjusted = 1;
+			var _eased = easeOutQuad(_adjusted, 0, 1, 1) + (_percent-1)*.9;
+			_bgs.style["clip-path"] = _bgs.style["-webkit-clip-path"] = "polygon(0% " + (100-(_percent-1)*100) + "%, 100% " + (100-(_eased)*100) + "%, 100% 100%, 0% 100%)";
+		}
+	}
+}
+/*function CaseWholesaleSection(_id, _me, _parent){
+	var _this = this;
+	var _icon = document.createElement("div");
+	_icon.className = "icon";
+	var _imgHolder = document.createElement("div");
+	_imgHolder.className = "imgHolder";
+	_icon.appendChild(_imgHolder);
+	//Load icon
+	var _img = new GLBImage(_me.getAttribute("data-icon"), _imgHolder, null, null, "img", iconLoaded);
+	_img.load();
+	
+	function iconLoaded(e){
+		TweenLite.set(_imgHolder, {scale:.5});
+		_me.insertBefore(_icon, _me.firstChild);
+	}
+	
+	var _newX = 0, _curOp = 1, _newOp = 1;
+	_this.updateP = function(_p){
+		if(GLB._isMobile){
+			_p -= .25;
+			_p = Math.max(1, _p);
+			_p = Math.pow(_p, 3.0);
+			_p = Math.min(2, _p);
+		}
+		_p -= _id;
+		var _adjusted = 1-_p;
+		
+		var _eased = 1 - easeInQuad(_adjusted, 0, 1, 1);
+		if(_p > 1) _eased = 1 + easeInQuad(_adjusted, 0, 1, 1);
+		_eased = _eased*.5 + (1-_adjusted)*.5;
+		//if(GLB._isMobile) _eased = _eased*5-1.5;
+		if(GLB._isMobile) _newX = (1-_eased) * GLB._vw*1.5;
+		else _newX = (1-_eased) * GLB._vw*.4;
+		TweenLite.set(_imgHolder, {x:-_newX*.04});
+		TweenLite.set(_me, {x:_newX});
+		
+		//Opacity
+		_newOp = 1.2 * Math.round((1 - Math.abs(1 - _eased))*50)/50;
+		if(_newOp > 1) _newOp = 1;
+		if(_curOp != _newOp){
+			_curOp = _newOp;
+			_me.style.opacity = _newOp;
+		}
+	}
+}*/
+
+function CaseTwoState(_me, _parent){
+	var _this = this;
+	_this.ref = _me;
+	var _hidden = true, _active = false, _f3d = false/*, _animIn = false*/;
+	_this._h = GLB._relH;
+	_this._offsetY = GLB._relH*2;
+	var _curY = 0, _newY = 0;
+	var _statesHTML = _me.getElementsByClassName("state");
+	var _states = [];
+	var _firstType;
+	
+	_this.resized = function(){
+		if(GLB._isMobile){
+			_me.style.height = "auto";
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+		else _me.style.height = GLB._relH + "px";
+		_this._h = GLB._relH*2;
+		for(var i=0;i<_states.length;i++) _states[i].resized();
+	}
+	_this.layoutUpdated = function(){
+		if(GLB._isMobile) _this._h = _me.offsetHeight;
+	}
+	
+	var _percent = 0, _eased = 0, _curH = 0, _newH = 0;
+	_this.moveY = function(_y){
+		if(!_active) return;
+		if(GLB._isMobile){
+			_newY = _this._offsetY-_y;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				_states[0].load(), _states[1].load();
+				if(GLB._supportsAutoPlay) _states[0].play(), _states[1].play();
+				//console.log("CaseTwoState view");
+			}
+			else{
+				if(GLB._supportsAutoPlay) _states[0].pause(false), _states[1].pause(false);
+				//console.log("CaseTwoState out view");
+			}
+			return;
+		}
+		else{
+			_newY = _y+_this._offsetY;
+			//Freeze when in screen but not enough to move out
+			_percent = 1 - (_newY/GLB._relH);//0-1 normal first state, 1-2 second state
+			if(_firstType == 0) _eased = (easeOutQuad(Math.min(_percent, 1), 0, 1, 1))*.5 + _percent*.5;
+			else _eased = _percent;
+			
+			//Adjust _newY
+			if(_percent > 1 && _percent < 2) _newY = 0;
+			else if(_percent <= 1) _newY = -(_eased-1)*GLB._relH;
+			else if(_percent >= 2) _newY = _y+_this._offsetY+GLB._relH;
+			
+			if(_newY >= -GLB._relH && _newY <= GLB._relH){
+				//Mask
+				if(_percent <= 1) _newH = GLB._relH;
+				else if(_percent > 1) _newH = Math.max(0, GLB._relH*(2-_percent));
+				if(_curH != _newH){
+					_curH = _newH;
+					_statesHTML[0].style.height = _newH + "px";
+				}
+				//console.log(_percent, _eased, _newY, _newH)
+				
+				if(_hidden) show();
+//				if(!_animIn) _animIn = true, animIn();
+				//State 0
+				if(_percent > .75 && _percent < 1.75) _states[0].play();
+				else _states[0].pause(false);
+				//State 1
+				if(_percent > .1) _states[1].load();
+				if(_percent > 1.75 && _percent < 2.75) _states[1].play();
+				else _states[1].pause(false);
+			}
+			else if(!_hidden && !GLB._isTouch) hide();
+		}
+		if(_curY == _newY || _hidden) return;
+		_curY = _newY;
+		TweenLite.set(_me, {y:_newY, force3D:_f3d});
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+		if(!GLB._isMobile) GLBEvents(document, "stoppedScrolledY", snap, true);
+	}
+	function hide(){
+		_hidden = true;
+		_me.style.visibility = "hidden";
+		_states[0].pause(true), _states[1].pause(true);
+		GLBEvents(document, "stoppedScrolledY", snap, false);
+	}
+		
+	_this.activate = function(){
+		_states = [];
+		for(var i=0;i<2;i++) _states.push(new CaseState(i, _statesHTML[i], _me));
+		_firstType = _states[0]._type;
+		_active = true;
+		if(!GLB._isMobile) TweenLite.set(_me, {y:_this._offsetY, force3D:_f3d});
+	}
+	_this.deactivate = function(){
+		hide();
+		_active = false;
+		for(var i=0;i<2;i++) _states[i].destroy();
+		_states = [];
+	}
+	function snap(e){
+		if(_percent > 1 && _percent < 2.25) _scrollNav.snapY(Math.abs((_percent-Math.round(_percent))*2)+.3, Math.round(_percent-1) * -GLB._relH - _this._offsetY);
+	}
+}
+function CaseState(_id, _me, _parent){
+	var _this = this;
+	var _type = parseInt(_me.getAttribute("data-type") || "0");
+	_this._type = _type;
+	var _url = _me.getAttribute("data-url") || "";
+	var _video, _image;
+	var _loaded = false;
+	
+	if(_type == 0){
+		//Text on background
+	}
+	else if(_type == 1){
+		//Local video clip
+		_video = document.createElement("video");
+		_video.className = "media";
+		_video.preload = "meta";
+		_video.autoPlay = false;
+		_video.controls = !GLB._supportsAutoPlay;
+		_video.loop = false;
+		_video.setAttribute('playsinline', 'true'); // must be set before src is set or it will be ignored
+		_video.playsinline = true;
+		if(GLB._isTouch && GLB._supportsAutoPlay) _video.muted = true, _video.controls = true;
+		if(!GLB._isMobile && _id == 1) TweenLite.set(_me, {y:1}); //Avoid overlapping borders=edges when scrolling
+		var _srcMp4 = document.createElement("source"); 
+		_srcMp4.type = "video/mp4", _srcMp4.src = _url;
+		_video.appendChild(_srcMp4);
+		_me.appendChild(_video);
+	}
+	else if(_type == 2){
+		if(!GLB._supportsAutoPlay) _image = new GLBImage(_me.getAttribute("data-fallback"), _me, null, null, "img", imgLoaded);
+		else _video = new InLineYoutubePlayer(_me.getAttribute("data-yt"), _me);
+	}
+	else if(_type == 3){
+		_image = new GLBImage(_url, _me, null, null, "img", imgLoaded, true);
+	}
+	
+	function imgLoaded(){
+		_this.resized();
+		if(GLB._isMobile) _parent.dispatchEvent(GLBCustomEvent("updateSiblings", 0));
+	}
+	//Youtube waits with load until scrolled to this module
+	_this.load = function(){
+		if(_loaded) return;
+		_loaded = true;
+		//console.log("LOAD STATE", _id, _type);
+		if(_type == 1) _video.load();
+		if(!GLB._supportsAutoPlay && _type == 2) _image.load();
+		else if(_type == 2) _video.load();
+		else if(_type == 3) _image.load();
+	}
+	_this.resized = function(){
+		if(_type == 1){
+			var _videoW = GLB._vw, _videoH = GLB._vw*9/16;
+			if(!GLB._isMobile && _videoH < GLB._relH){
+				_videoH = GLB._relH;
+				_videoW = _videoH/(9/16);
+			}
+			_video.style.width = _videoW + "px", _video.style.height = _videoH + "px";
+			if(GLB._isMobile) TweenLite.set(_video, {x:0, y:0});
+			else TweenLite.set(_video, {x:(GLB._vw-_videoW)*.5, y:(GLB._relH-_videoH)*.5});
+		}
+		else if(_type == 2){
+			if(!GLB._supportsAutoPlay) _image.scaleTo("fill", GLB._vw, GLB._relH, "center", "center");
+			else if(GLB._isMobile) _video.setMobileAspect();
+		}
+		else if(_type == 3) _image.scaleTo("fill", GLB._vw, GLB._relH, "center", "center");
+	}
+	_this.resized();
+	
+	var _isStarted = false, _isReset = true;
+	_this.play = function(){
+		if(_fastClosing) return;
+		if(_type == 0 || (!GLB._supportsAutoPlay && _type == 2)) return;
+		if(_isStarted) return;
+		_isStarted = true;
+		if(_type == 1 || _type == 2) _isReset = false, _video.play();
+	}
+	_this.pause = function(_reset){
+		if(_type == 0 || (!GLB._supportsAutoPlay && _type == 2)) return;
+		if(!_isStarted){
+			if(!_isReset && _reset && (_type == 1 || _type == 2)){
+				_isReset = true, _video.currentTime = 0;
+				if(_type == 2) _video.seek();
+			}
+			return;
+		}
+		_isStarted = false;
+		if(_type == 1 || _type == 2){
+			_video.pause();
+			if(_reset){
+				_isReset = true, _video.currentTime = 0;
+				if(_type == 2) _video.seek();
+			}
+		}
+	}
+	_this.destroy = function(){
+		if(_type == 1){
+			_video.pause();
+			_me.removeChild(_video);
+			_video.src = "";
+			_video = null;
+		}
+		else if(_type == 2){
+			if(!GLB._supportsAutoPlay){
+				_image.destroy();
+				_image = null;
+			}
+			else{
+				_video.destroy();
+				_video = null;
+			}
+		}
+		else if(_type == 3){
+			_image.destroy();
+			_image = null;
+		}
+	}
+}
+
+function CaseCustomModule(_me, _parent){
+	var _this = this;
+	_this.ref = _me;
+	var _hidden = true, _f3d = false, _animIn = false;
+	_this._h = GLB._relH;
+	_this._offsetY = GLB._relH*2;
+	var _curY = 0, _newY = 0, _extraTiltH = 0;
+	var _class = _me.className;
+	//Find template to use
+	var _layout, _moveLayout = false;
+	if(_class.indexOf("simpletext") != -1) _layout = new SimpleText(_me, _parent);
+	else if(_class.indexOf("solar") != -1) _layout = new customSolar(_me, _parent);
+	else if(_class.indexOf("bygma") != -1) _layout = new customBygma(_me), _moveLayout = true, _extraTiltH = 120, _f3d = true;
+	else if(_class.indexOf("inspiration") != -1) _layout = new customInspiration(_me, _parent), _extraTiltH = 100;
+	else if(_class.indexOf("linie") != -1) _layout = new customLinie(_me);
+	
+	if(GLB._isMobile) _f3d = false;
+	
+	_this.resized = function(){
+		if(_layout) _layout.resized();
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+	}
+	_this.layoutUpdated = function(){
+		if(GLB._isMobile) _this._h = _me.offsetHeight;
+		else{
+			if(_layout) _this._h = _layout.getH();
+			else _this._h = _me.offsetHeight;
+		}
+	}
+	
+	_this.moveY = function(_y){
+		if(GLB._isMobile){
+			_newY = _this._offsetY-_y;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				if(!_animIn) _animIn = true, animIn();
+				//console.log("sIn view");
+			}
+			return;
+		}
+		else{
+			_newY = _y+_this._offsetY;
+			if(_newY >= -(_this._h+_extraTiltH) && _newY <= GLB._relH){
+				if(_hidden) show();
+				if(!_animIn) _animIn = true, animIn();
+				//console.log("In view");
+			}
+			else if(!_hidden && !GLB._isTouch) hide();
+		}
+		if(_curY == _newY || _hidden) return;
+		_curY = _newY;
+		if(_moveLayout && _layout) _layout.moveY(_newY);
+		TweenLite.set(_me, {y:_newY, force3D:_f3d});
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	function hide(){
+		reset();
+		_hidden = true;
+		_me.style.visibility = "hidden";
+	}
+	
+	function animIn(){
+		if(_layout) _layout.animIn();
+	}
+	function reset(){
+		if(!_animIn) return;
+		_animIn = false;
+		if(_layout) _layout.reset();
+	}
+	
+	_this.activate = function(){
+		if(!GLB._isMobile) TweenLite.set(_me, {y:_this._offsetY, force3D:_f3d});
+	}
+	_this.deactivate = function(){
+		hide();
+	}
+}
+function customSolar(_me, _container){
+	var _this = this;
+	//Header
+	var _h2 = new H1WithBg(_me, _me.querySelector("h2"));
+	//Build three elements (1 image is the only one visible on mobile though)
+	var _areasHTML = _me.getElementsByClassName("block");
+	var _numAreas = _areasHTML.length;
+	var _areas = [];
+	for(var i=0;i<_numAreas;i++) _areas.push(new solarLight(i, _areasHTML[i], _me, _container));
+	
+	_this.resized = function(){
+		_h2.resized();
+		if(GLB._isMobile) for(var i=1;i<_numAreas;i++) _areas[i].showImg(false);
+		else for(var i=1;i<_numAreas;i++) _areas[i].showImg(true);
+	}
+	_this.getH = function(){
+		if(GLB._vw < 1200) return 740;
+		return 800;
+	}
+	_this.animIn = function(){
+		_h2.animIn(.2, false);
+		for(var i=0;i<_numAreas;i++) _areas[i].animIn();
+	}
+	_this.reset = function(){
+		_h2.animOut(false);
+		for(var i=0;i<_numAreas;i++) _areas[i].reset();
+	}
+}
+function solarLight(_id, _me, _parent, _container){
+	var _this = this;
+	var _loaded = false;
+	//Load image
+	var _url = _me.getAttribute("data-url") || "";
+	var _lamp = new GLBImage(_url, _me, null, null, "lamp", imgLoaded, true);
+	var _blackBar = document.createElement("div");
+	_blackBar.className = "blackBar";
+	_me.insertBefore(_blackBar, _me.firstChild);
+	
+	function imgLoaded(){
+		xAnim();
+		if(GLB._isMobile && _id == 0) _parent.dispatchEvent(GLBCustomEvent("updateSiblings", 0));
+	}
+	_this.animIn = function(){
+		if(!_loaded){
+			_loaded = true;
+			_lamp.load();
+		}
+		else xAnim();
+	}
+	function xAnim(){
+		TweenLite.to(_me, .5, {opacity:1, delay:_id*.2, ease:Cubic.easeOut});
+		TweenLite.to(_me, 1.5, {x:0, delay:_id*.2, ease:Cubic.easeOut});
+	}
+	_this.reset = function(){
+		TweenLite.killTweensOf(_me);
+		TweenLite.set(_me, {x:256, opacity:0});
+	}
+	_this.reset();
+	_this.showImg = function(_show){
+		if(_show) _lamp.img.style.display = "block";
+		else _lamp.img.style.display = "none";
+	}
+}
+function customBygma(_me){
+	var _this = this;
+	//Header
+	var _h2 = new H1WithBg(_me, _me.querySelector("h2"));
+	var _p = _me.querySelector("p");
+	//Build three elements (1 image is the only one visible on mobile though)
+	var _areasHTML = _me.getElementsByClassName("block");
+	var _numAreas = _areasHTML.length;
+	var _areas = [];
+	for(var i=0;i<_numAreas;i++) _areas.push(new bygmaBox(i, _areasHTML[i], _me));
+	//Bottom tilt
+	var _tiltBottom = document.createElement("div");
+	_tiltBottom.className = "tiltedBottom";
+	_me.appendChild(_tiltBottom);
+	
+	_this.resized = function(){
+		_h2.resized();
+	}
+	_this.getH = function(){
+		return 720;
+	}
+	_this.animIn = function(){
+		_h2.animIn(.2, false);
+		for(var i=0;i<_numAreas;i++) _areas[i].animIn();
+		_p.style.opacity = 1;
+	}
+	_this.reset = function(){
+		_h2.animOut(false);
+		_p.style.opacity = 0;
+		for(var i=0;i<_numAreas;i++) _areas[i].reset();
+	}
+	_this.moveY = function(_y){
+		for(var i=0;i<_numAreas;i++) _areas[i].moveY(_y);
+	}
+}
+function bygmaBox(_id, _me, _parent){
+	var _this = this;
+	var _loaded = false;
+	//Load image
+	var _url = _me.getAttribute("data-url") || "";
+	var _img = new GLBImage(_url, _me, null, null, "icon", imgLoaded, true);
+	var _bg = document.createElement("div");
+	_bg.className = "greyBg";
+	_me.insertBefore(_bg, _me.firstChild);
+	var _box = new PerspectiveBox(_me, 220, 360);
+	
+	_this.moveY = function(_y){
+		_box.moveY(_y);
+	}
+	function imgLoaded(){
+		yAnim();
+	}
+	_this.animIn = function(){
+		if(!_loaded){
+			_loaded = true;
+			_img.load()
+		}
+		else yAnim();
+	}
+	function yAnim(){
+		TweenLite.to(_me, 1.0 + _id*.1, {y:0, force3D:true, ease:Cubic.easeOut});
+	}
+	_this.reset = function(){
+		TweenLite.killTweensOf(_me);
+		TweenLite.set(_me, {y:128, force3D:true});
+	}
+	_this.reset();
+}
+function customInspiration(_me, _container){
+	var _this = this;
+	var _loaded = false;
+	var _right = _me.querySelector("div.right");
+	//Header
+	var _h2 = new H1WithBg(_me, _me.querySelector("h2"));
+	//Load tablet screen background
+	var _screen = document.createElement("div");
+	_screen.className = "screen";
+	_right.appendChild(_screen);
+	var _url = _right.getAttribute("data-bg") || "";
+	var _screenImg = new GLBImage(_url, _screen, 462, 831, "screen", null, true);
+	//Load tablet video
+	var _video = document.createElement("video");
+	_video.preload = "meta";
+	//_video.autoPlay = true;
+	_video.controls = !GLB._supportsAutoPlay;
+	_video.loop = true;
+	_video.muted = true;
+	_video.setAttribute('playsinline', 'true'); // must be set before src is set or it will be ignored
+	_video.playsinline = true;
+	var _srcMp4 = document.createElement("source");
+	_srcMp4.type = "video/mp4";
+	_srcMp4.src = _right.getAttribute("data-url");
+	_video.appendChild(_srcMp4);
+	_screen.appendChild(_video);
+		
+	_this.resized = function(){
+		_h2.resized();
+	}
+	_this.getH = function(){
+		var _offH = _me.offsetHeight;
+		if(!GLB._isMobile && _offH > 840 && _offH < 860) return 850;
+		return _me.offsetHeight;
+	}
+	_this.animIn = function(){
+		_h2.animIn(.2, false);
+		if(!_loaded){
+			_loaded = true;
+			_screenImg.load();
+		}
+		_video.play();
+	}
+	_this.reset = function(){
+		_h2.animOut(false);
+		_video.pause();
+	}
+}
+
+function customLinie(_me, _container){
+	var _this = this;
+	//Header
+	var _h2 = new H1WithBg(_me, _me.querySelector("h2"));
+	//Build three elements (1 image is the only one visible on mobile though)
+	var _areasHTML = _me.getElementsByClassName("block");
+	var _numAreas = _areasHTML.length;
+	var _areas = [];
+	
+	_this.resized = function(){
+		_h2.resized();
+	}
+	_this.getH = function(){
+		return _me.offsetHeight;
+	}
+	_this.animIn = function(){
+		_h2.animIn(.2, false);
+	}
+	_this.reset = function(){
+		_h2.animOut(false);
+	}
+}
+function SimpleText(_me, _container){
+	var _this = this;
+	//Header
+	var _h2 = new H1WithBg(_me, _me.querySelector("h2"));
+	var _hasImg = false, _loaded = false, _img, _imgH = 0;
+	//Check for image
+	var _url = _me.getAttribute("data-url") || "";
+	if(_url == "" || _url == "/") _hasImg = false;
+	else{
+		_hasImg = true;
+		_img = new GLBImage(_url, _me, null, null, "img", imgLoaded, false);
+		_imgH = parseInt(_me.getAttribute("data-imgH") || 0);
+		TweenLite.set(_img.img, {x:-128});
+	}
+	function imgLoaded(){
+		_img.img.className = "img fadeIn";
+	}
+	
+	_this.resized = function(){
+		_h2.resized();
+		if(_hasImg){
+			if(GLB._isMobile) _me.style.height = "auto";
+			else _me.style.height = _imgH + "px";
+		}
+	}
+	_this.getH = function(){
+		if(_hasImg) return _imgH;
+		return _me.offsetHeight;
+	}
+	_this.animIn = function(){
+		_h2.animIn(.2, _hasImg);
+		if(!_hasImg) return;
+		if(!_loaded){
+			_loaded = true;
+			_img.load();
+		}
+		TweenLite.to(_img.img, 1, {x:0, delay:.1, ease:Cubic.easeOut});
+	}
+	_this.reset = function(){
+		_h2.animOut(_hasImg);
+		if(!_hasImg) return;
+		TweenLite.killTweensOf(_img.img);
+		TweenLite.set(_img.img, {x:-128});
+	}
+}
+function CaseIconGallery(_me, _parent){
+	var _this = this;
+	_this.ref = _me;
+	var _built = false, _hidden = true, _f3d = false, _animIn = false, _f3dInner = false;
+	_this._h = GLB._relH;
+	_this._offsetY = GLB._relH*2;
+	var _curId = 0, _time, _ease;
+	var _curY = 0, _newY = 0;
+	
+	//Header
+	var _h2 = new H1WithBg(_me, _me.querySelector("h2"));
+	
+	//Set color theme
+	var _themeColor = _parent.getAttribute("data-color") || "initial";
+	
+	var _mediaHolder = _me.getElementsByClassName("medias")[0];
+	var _mediaHtml = _mediaHolder.getElementsByClassName("media");
+	var _numMedia = _mediaHtml.length;
+	var _media = [];
+	var _rowW = parseInt(_mediaHolder.getAttribute("data-spacing") || "100");
+	var _flip = (_mediaHolder.getAttribute("data-side") || "right") == "left";
+	//Check for image in side
+	var _rightImg = _me.getElementsByClassName("rightImg")[0] || null;
+	var _leftA, _rightA, _sideImg;
+	var _sideImgLoaded = false;
+	if(_rightImg && !GLB._isMobile) _sideImg = new GLBImage(_rightImg.getAttribute("data-img"), _rightImg, null, null, "img", sideImgLoaded);
+	
+	function sideImgLoaded(){
+		_sideImg.img.className = "img fadeIn";
+	}
+	
+	_this.resized = function(){
+		_h2.resized();
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+		if(!_built) return;
+		for(var i=0;i<_numMedia;i++) _media[i].resized();
+		goto(false, "");
+	}
+	_this.layoutUpdated = function(){
+		_this._h = _me.offsetHeight;
+	}
+		
+	_this.moveY = function(_y){
+		if(GLB._isMobile){
+			_newY = _this._offsetY-_y;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				if(!_animIn){
+					_animIn = true;
+					inView();
+				}
+				//console.log("galleryIn view");
+			}
+			else{
+				//console.log("galleryOut of view");
+			}
+		}
+		else{
+			//Show/hide
+			_newY = _y+_this._offsetY;
+
+			if(_newY >= -_this._h && _newY <= GLB._relH){
+				if(_hidden) show();
+				if(!_hidden && !_animIn){
+					_animIn = true;
+					inView();
+				}
+			}
+			else if(!GLB._isTouch){
+				if(!_hidden) hide();
+				if(_animIn){
+					_animIn = false;
+					outOfView();
+				}
+			}
+		}
+		if(_hidden) return;
+		if(!GLB._isMobile && _curY != _newY){
+			_curY = _newY;
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+		}
+	}
+	
+	function inView(){
+		GLBEvents(_mediaHolder, "GLBSwipe", swiped, true);
+		GLBEvents(document, "keydown", keydown, true);
+		_h2.animIn(.2, false);
+		if(!_sideImgLoaded){
+			_sideImgLoaded = true;
+			if(_sideImg) _sideImg.load();
+		}
+	}
+	function outOfView(){
+		GLBEvents(_mediaHolder, "GLBSwipe", swiped, false);
+		GLBEvents(document, "keydown", keydown, false);
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	function hide(){
+		reset();
+		_hidden = true;
+		outOfView();
+		if(!GLB._isMobile) _me.style.visibility = "hidden";
+	}
+	
+	function reset(){
+		if(!_animIn) return;
+		_animIn = false;
+		_h2.animOut(false);
+	}
+	
+	_this.activate = function(){
+		if(!_built){
+			_built = true;
+			for(var i=0;i<_numMedia;i++) _media.push(new CaseGalleryMedia(i, _mediaHtml[i], _themeColor, _me, true));
+			for(i=0;i<_numMedia;i++) _media[i].load(); //Load them all instantly
+			//Navigation
+		    if(!GLB._isMobile && _numMedia > 1) {
+		        _leftA = new CaseGalleryArrow(-1, _mediaHolder, _me, _themeColor);
+		        _rightA = new CaseGalleryArrow(1, _mediaHolder, _me, _themeColor);
+		    }
+		}
+		if(!GLB._isMobile) TweenLite.set(_me, {y:_this._offsetY, force3D:_f3d});
+	}
+	_this.deactivate = function(){
+		if(!_hidden) hide();
+	}
+	
+	//Navigation in gallery
+	function keydown(e){
+		//console.log(e.keyCode, e);
+		if(e.keyCode == 39 || e.keyCode == 37) e.preventDefault()
+		else return;
+		if(e.keyCode == 39) _mediaHolder.dispatchEvent(GLBCustomEvent("GLBSwipe", 1));
+		else _mediaHolder.dispatchEvent(GLBCustomEvent("GLBSwipe", -1));
+	}
+	
+    //Swype
+	var _direction = 0;
+    function swiped(e){
+		_direction = e.detail;
+		if(_flip) _direction *= -1;
+		_curId = (_curId + _direction);
+		if (_curId < 0) _curId = _numMedia-2;
+        else if (_curId >= (_numMedia-1)) _curId = 0;//allow only three visible, not 1 alone
+        goto(true, _direction);
+    }
+
+	//Swipe functionality
+    function goto(_animate, _direction){
+		_time = .4, _ease = Cubic.easeOut;//autochange with interval
+        if(_animate){
+			//TweenLite.to(_mediaHolder, _time, {x:-_rowW * _curId, ease:_ease, force3D:_f3dInner});
+			for(var i=0;i<_numMedia;i++){
+				var _startAt = _curId+4;
+				if(_direction == 1) _startAt = _curId-1;
+				var _distFromCur = Math.abs(i-_startAt);
+				TweenLite.to(_media[i].instance, _time + _distFromCur*.1, {x:(_rowW*i) - (_rowW*_curId), ease:_ease, force3D:_f3dInner});
+			}
+		}
+        else{
+			if(GLB._isMobile){
+				for(var i=0;i<_numMedia;i++) TweenLite.set(_media[i].instance, {x:0, force3D:_f3dInner});
+			}
+			else{
+				for(var i=0;i<_numMedia;i++) TweenLite.set(_media[i].instance, {x:(_rowW*i) - (_rowW*_curId), force3D:_f3dInner});
+			}
+		}
+		
+    }
+}
+
+function CaseQuotesModule(_me, _parent){
+	var _this = this;
+	_this.ref = _me;
+	var _hidden = true, _f3d = false, _animIn = false;
+	var _h2 = _me.getElementsByTagName("h2")[0];
+	var _h4 = _me.getElementsByTagName("h4")[0];
+	var _tiltTop = document.createElement("div");
+	if(GLB._iOS) _tiltTop.className = "tiltedTop unjagMyEdge";
+	else _tiltTop.className = "tiltedTop";
+	_tiltTop.style.backgroundColor = _parent.getAttribute("data-color") || "initial";
+	_me.insertBefore(_tiltTop, _me.firstChild); 
+	
+	_this._h = GLB._relH;
+	_this._offsetY = GLB._relH*2;
+
+	_this.resized = function(){
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}	
+	}
+	_this.layoutUpdated = function(){
+		_this._h = _me.offsetHeight;
+	}
+	
+	var _curY = 0, _newY = 0;
+	_this.moveY = function(_y){
+		if(GLB._isMobile){
+			_newY = _this._offsetY-_y;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				console.log("quote in")
+				if(!_animIn) _animIn = true, animIn();
+			}
+			else if(_animIn) reset();
+			return;
+		}
+		else{
+			_newY = _y+_this._offsetY;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				if(_hidden) show();
+				if(!_animIn) _animIn = true, animIn();
+			}
+			else if(!_hidden) hide();
+		}
+		_newY -= 1; //For prettier overlaps
+		if(_curY == _newY || _hidden) return;
+		_curY = _newY;
+		TweenLite.set(_me, {y:_newY, force3D:_f3d});
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	function hide(){
+		reset();
+		_hidden = true;
+		_me.style.visibility = "hidden";
+	}
+	function animIn(){
+		_h2.className = _h4.className = "";
+		_h2.style.opacity = _h4.style.opacity = 1;
+	}
+	function reset(){
+		if(!_animIn) return;
+		_animIn = false;
+		_h2.className = _h4.className = "noAnim";
+		_h2.style.opacity = _h4.style.opacity = 0;
+	}
+	_this.activate = function(){
+		if(!GLB._isMobile) TweenLite.set(_me, {y:_this._offsetY, force3D:_f3d});
+	}
+	_this.deactivate = function(){
+		hide();
+	}
+}
+
+function CaseGallery(_me, _parent){
+	var _this = this;
+	_this.ref = _me;
+	var _built = false, _hidden = true, _animIn = false, _f3d = false, _f3dInner = true, _firstTime = true;
+	var _curId = 0, _time, _ease;
+	var _curY = 0, _newY = 0;
+	_this._h = GLB._relH;
+	_this._offsetY = GLB._relH*2;
+	//Set color theme
+	var _themeColor = _parent.getAttribute("data-color") || "initial";
+	
+	var _mediaHolder = _me.getElementsByClassName("medias")[0];
+	var _mediaHtml = _mediaHolder.getElementsByClassName("media");
+	var _numMedia = _mediaHtml.length;
+	var _media = [];
+	
+	var _title = document.createElement("div");
+	_title.className = "title";
+	var _text = document.createElement("div");
+	_text.className = "text";
+	
+	var _leftA, _rightA;
+	var _progress = document.createElement("div");
+	_progress.className = "progress";
+	_progress.style.backgroundColor = _themeColor;
+	
+	_this.resized = function(){
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+		else{
+			
+		}
+		_me.style.height = GLB._relH+1 + "px";//+1 for better overlapping between modules
+		_mediaHolder.style.width = GLB._vw * _numMedia + "px";
+		if(!_built) return;
+		for(var i=0;i<_numMedia;i++) _media[i].resized();
+		goto(false, false);
+		_swipe.update(GLB._vw, _numMedia);
+	}
+	_this.layoutUpdated = function(){
+		_this._h = GLB._relH;
+	}
+	
+	_this.activate = function(){
+		if(!_built){
+			_built = true;
+			for(var i=0;i<_numMedia;i++) _media.push(new CaseGalleryMedia(i, _mediaHtml[i], _themeColor, _me, false));
+			for(i=0;i<Math.min(2, _numMedia);i++) _media[i].load(); //Load first medias
+			_title.textContent = _media[_curId]._title, _text.textContent = _media[_curId]._text;
+			_me.appendChild(_title);
+			_me.appendChild(_text);
+			//Navigation
+		    if(!GLB._isMobile && _numMedia > 1) {
+		        _leftA = new CaseGalleryArrow(-1, _mediaHolder, _me, _themeColor);
+		        _rightA = new CaseGalleryArrow(1, _mediaHolder, _me, _themeColor);
+		    }
+			_me.appendChild(_progress);
+		}
+		if(!GLB._isMobile) TweenLite.set(_me, {y:_this._offsetY, force3D:_f3d});
+	}
+	
+	_this.deactivate = function(){
+		if(!_hidden) hide();
+	}
+	function hide(){
+		_hidden = true;
+		_animIn = false;
+		outOfView();
+		if(!GLB._isMobile) _me.style.visibility = "hidden";
+	}
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	
+	function inView(){
+		GLBEvents(_mediaHolder, "GLBSwipe", swiped, true);
+		_swipe.addListeners();
+		GLBEvents(document, "keydown", keydown, true);
+	}
+	function outOfView(){
+		GLBEvents(_mediaHolder, "GLBSwipe", swiped, false);
+		GLBEvents(document, "keydown", keydown, false);
+		_swipe.removeListeners();
+	}
+	
+	//Demo the swipe on mobile
+	function introAnim(){
+		if(_numMedia <= 1) return;
+		TweenLite.to(_mediaHolder, .8, {x:-GLB._vw * (_curId+.1), delay:1.2, ease:Quad.easeInOut, force3D:_f3dInner});
+		TweenLite.to(_mediaHolder, .8, {x:-GLB._vw * _curId, delay:2.0, ease:Quad.easeInOut, force3D:_f3dInner});
+		TweenLite.to(_progress, .8, {scaleX:(_curId+1.1)/_numMedia, transformOrigin:"0 0", delay:1.2, ease:Quad.easeInOut, force3D:false});
+		TweenLite.to(_progress, .8, {scaleX:(_curId+1)/_numMedia, transformOrigin:"0 0", delay:2.0, ease:Quad.easeInOut, force3D:false});
+	}
+	
+	_this.moveY = function(_y){
+		if(GLB._isMobile){
+			_newY = _this._offsetY-_y;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				if(!_animIn){
+					_animIn = true;
+					inView();
+					if(_firstTime) introAnim();
+					_firstTime = false;
+				}
+			}
+		}
+		else{
+			//Show/hide
+			_newY = _y+_this._offsetY;
+
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				if(_hidden) show();
+				//console.log("galleryIn view");
+			}
+			else if(!_hidden && !GLB._isTouch) hide();
+			if(_newY <= (GLB._relH - 100) && _newY >= (-_this._h + 50)){
+				if(!_hidden && !_animIn){
+					_animIn = true;
+					inView();
+				}
+				
+			}
+			else if(!GLB._isTouch){
+				if(_animIn){
+					_animIn = false;
+					outOfView();
+				}
+			}
+		}
+		if(_hidden) return;
+		if(!GLB._isMobile && _curY != _newY){
+			_curY = _newY;
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+		}
+	}
+	
+	//Navigation in gallery
+	function keydown(e){
+		//console.log(e.keyCode, e);
+		if(e.keyCode == 39 || e.keyCode == 37) e.preventDefault()
+		else return;
+		if(e.keyCode == 39) _mediaHolder.dispatchEvent(GLBCustomEvent("GLBSwipe", 1));
+		else _mediaHolder.dispatchEvent(GLBCustomEvent("GLBSwipe", -1));
+	}
+	
+	var _swipe = new GLBSwipe(_mediaHolder, null);
+    //Swype
+	var _slowsnap = false;
+    function swiped(e){
+		//console.log("Swiped:", e.detail);
+		if(e.detail === 0){
+            //Snap reset (not moved enough)
+			_slowsnap = false;
+        }
+        else {
+            //_media[_curId].off();
+            //Snap to next/previous
+            _curId = (_curId + e.detail);
+            /*if (_curId < 0) _curId = 0;
+            else if (_curId >= _numImgs) _curId = _numImgs - 1;*/
+			_slowsnap = true;
+			if (_curId < 0) _curId = _numMedia-1;
+            else if (_curId >= _numMedia) _curId = 0;
+			else _slowsnap = false;
+            //_media[_curId].on();
+			//Update text
+			_text.className = "text", _title.className = "title";
+			_title.style.opacity = _text.style.opacity = 0;
+        }
+        goto(true, _slowsnap);
+		
+    }
+
+	//Swipe functionality
+    function goto(_animate, _slow){
+        TweenLite.killTweensOf(_mediaHolder);
+		TweenLite.killTweensOf(_progress);
+		//if(_animate) clearTimeout(_autoChangeTimer);
+        if(_slow) _time = .8, _ease = Quad.easeInOut;//autochange with interval
+        else _time = .4, _ease = Quad.easeOut;//user changed
+        if(_animate && !_slow && GLB._vw > 1200) _time += .2; //Extra time for large screens
+        if(_animate){
+			TweenLite.to(_mediaHolder, _time, {x:-GLB._vw * _curId, ease:_ease, force3D:_f3dInner, onComplete:loadNext, onCompleteParams:[_slow]});
+			//TweenLite.to(_progress, _time, {scaleX:_curId/(_numMedia-1), transformOrigin:"0 0", ease:_ease, force3D:false});
+			TweenLite.to(_progress, _time, {scaleX:(_curId+1)/_numMedia, transformOrigin:"0 0", ease:_ease, force3D:false});
+		}
+        else{
+			TweenLite.set(_mediaHolder, {x:-GLB._vw * _curId, force3D:_f3dInner});
+			//TweenLite.set(_progress, {scaleX:_curId/(_numMedia-1), transformOrigin:"0 0", force3D:false});
+			TweenLite.set(_progress, {scaleX:(_curId+1)/_numMedia, transformOrigin:"0 0", force3D:false});
+		}
+		
+    }
+    function loadNext(_slow) {
+		_title.textContent = _media[_curId]._title, _text.textContent = _media[_curId]._text;
+		_title.className = "title fadeUp";
+		_text.className = "text fadeUp";
+		_title.style.opacity = _text.style.opacity = 1;
+        for(var i = 0; i < Math.min(_numMedia, _curId + 2); i++) _media[i].load();
+	}
+}
+
+//to-do: mobile images?
+function CaseGalleryMedia(_id, _me, _themeColor, _parent, _isIcon){
+	var _this = this;
+	var _isVideo = (_me.className.indexOf("video") != -1);
+	var _type = 0; //0=image 1=video
+	if(_isVideo && !_isIcon) _type = 1;
+	//console.log("Create media", _type);
+	var _url = _me.getAttribute("data-img");
+	_this._title = _me.getAttribute("data-title") || "";
+	_this._text = _me.getAttribute("data-text") || "";
+	_this.instance = _me;
+	
+	var _media;
+	if(_type == 0) _media = new GLBImage(_url, _me, null, null, "img", imgLoaded, true);
+	else if(_type == 1) _media = new CaseVideo(_url, _me.getAttribute("data-yt"), _me.getAttribute("data-btn"), _me, _themeColor);
+	var _loadInit = false;
+	
+	_this.load = function(){
+		if(_loadInit) return;
+		_loadInit = true;
+		if(_type == 0) _media.load();
+		else if(_type == 1) _media.load();
+	}
+	function imgLoaded(e){
+		_this.resized();
+		if(GLB._isMobile && _id == 0 && _isIcon) _parent.dispatchEvent(GLBCustomEvent("updateSiblings", 0));
+	}
+	
+	//Bottom (text on white background) is 160px high.
+	var _bottomH = 160;
+	
+	_this.resized = function(){
+		if(_isIcon){
+			
+		}
+		else{
+			if(GLB._reliableSh < 849.5) _bottomH = 120;
+			else _bottomH = 160;
+			//Always fill width
+			_me.style.width = GLB._vw + "px";
+			_me.style.height = (GLB._relH-_bottomH) + "px";
+			_me.style.left = GLB._vw*_id + "px";
+			if(_type == 0) _media.scaleTo("fill", GLB._vw, GLB._relH-_bottomH, "center", "center");
+			else if(_type == 1) _media.resized(_bottomH);
+		}
+	}
+}
+
+function CaseVideo(_url, _yt, _playLabel, _parent, _themeColor){
+	var _this = this;
+	var _thumb = new GLBImage(_url, _parent, null, null, "img", loaded);
+	var _playBtn = new CaseVideoBtn(_parent, _playLabel, clicked, _themeColor);
+	var _ytPlayer;
+	
+	//Load thumbnail
+	_this.load = function(){
+		_thumb.load();
+		_playBtn.showInstant();
+	}
+	function loaded(){
+		_this.resized(_lastBottomH);
+	}
+	function clicked(e){
+		e.preventDefault();
+		e.stopPropagation();
+		if(!_ytPlayer) _ytPlayer = new CaseVideoPlayer();
+		_ytPlayer.load(_yt, _playBtn._instance);
+	}
+	var _lastBottomH = 0;
+	_this.resized = function(_bottomH){
+		_lastBottomH = _bottomH;
+		_thumb.scaleTo("fill", GLB._vw, GLB._relH-_bottomH, "center", "center");
+	}
+}
+
+function CaseVideoBtn(_parent, _playLabel, bubbleClicked, _themeColor){
+	var _this = this;
+	var _me = document.createElement("div");
+	_me.className = "playBtn";
+	var _bg = document.createElement("div");
+	_bg.className = "bg";
+	_me.appendChild(_bg);
+	var _playIcon = document.createElement("div");
+	_playIcon.className = "playIcon";
+	//Clone svg
+	var _clone = document.getElementById("playIcon").cloneNode(true);
+	_clone.setAttribute("id", "");
+	_playIcon.appendChild(_clone);
+	_me.appendChild(_playIcon);
+	var _label = document.createElement("div");
+	_label.className = "label";
+	_label.textContent = _playLabel;
+	_me.appendChild(_label);
+	_this._instance = _me;
+	_this._offsetY = 0;
+	try{
+		if(_themeColor) _clone.children[0].style.fill = _themeColor;
+	}
+	catch(e){}
+	
+	_this.makeRelative = function(){
+		_me.style.top = "50vh";
+	}
+	_this.resetPosition = function(){
+		_me.style.top = "50%";
+	}
+	
+	/*function down(e){
+		e.stopPropagation();
+		TweenLite.killTweensOf(_bg, false, {scale:true});
+		TweenLite.to(_bg, .1, {scale:.95, transformOrigin:"50% 50%", ease:Linear.easeNone});
+		TweenLite.to(_bg, .2, {scale:1, delay:.1, transformOrigin:"50% 50%", ease:Cubic.easeOut});
+		
+	}*/
+	function YTStopped(e){
+		GLBEvents(window, "YTStopped", YTStopped, false);
+		TweenLite.killTweensOf(_bg, false, {scale:true});
+		TweenLite.set(_bg, {scale:.9, transformOrigin:"50% 50%"});
+		TweenLite.to(_bg, .8, {scale:1, transformOrigin:"50% 50%", ease:Back.easeOut});
+	}
+	function over(e){
+		TweenLite.killTweensOf(_bg, false, {scale:true});
+		TweenLite.to(_bg, .3, {scale:1.02, transformOrigin:"50% 50%", ease:Cubic.easeOut});
+	}
+	function out(e){
+		TweenLite.killTweensOf(_bg, false, {scale:true});
+		TweenLite.to(_bg, .3, {scale:1, transformOrigin:"50% 50%", ease:Cubic.easeOut});
+	}
+	function clicked(e){
+		e.stopPropagation();
+		GLBEvents(window, "YTStopped", YTStopped, true);
+		bubbleClicked(e);
+	}
+	if(!GLB._isTouch){
+		GLBEvents(_me, "mousedown", clicked, true);
+		GLBEvents(_me, "mouseenter", over, true);
+		GLBEvents(_me, "mouseleave", out, true);
+	}
+	else GLBEvents(_me, "touchstart", clicked, true);
+	GLBEvents(_me, "click", clicked, true);
+	
+	_this.moveY = function(_y){
+		TweenLite.set(_me, {y:_y*1.2+_this._offsetY});
+	}
+	_this.animIn = function(_delay){
+		TweenLite.killTweensOf(_bg), TweenLite.killTweensOf(_playIcon);
+		TweenLite.set(_bg, {scale:.6, opacity:.5});
+		TweenLite.to(_bg, .6, {opacity:1, scale:1, delay:_delay, ease:Back.easeOut, onStart:show});
+		TweenLite.set(_playIcon, {opacity:0, y:4});
+		TweenLite.to(_playIcon, .8, {opacity:1, y:0, delay:_delay, ease:Quad.easeOut});
+		_parent.appendChild(_me);
+	}
+	_this.animOut = function(){
+		TweenLite.killTweensOf(_bg), TweenLite.killTweensOf(_playIcon);
+		TweenLite.set(_playIcon, {opacity:0});
+		_me.style.visibility = "hidden";
+		try{_parent.removeChild(_me);}
+		catch(e){}
+	}
+	_this.showInstant = function(){
+		TweenLite.set(_playIcon, {opacity:1});
+		show();
+		_parent.appendChild(_me);
+	}
+	function show(){
+		_me.style.visibility = "inherit";
+	}
+}
+
+function CaseVideoPlayer(){
+	var _this = this;
+	var _ytPlayer, _yt;
+	var _vars, _events = {'onReady': onPlayerReady,'onStateChange': onPlayerStateChange};
+	var _playerCon = document.createElement("div");
+	_playerCon.setAttribute("id", "CaseVideoYoutubePlayer");
+
+	//Close button
+	var _closeBtn = document.createElement("div");
+	_closeBtn.className = "closeBtn";
+	var _lineA = document.createElement("div");
+	_lineA.className = "lineA";
+	_closeBtn.appendChild(_lineA);
+	var _lineB = document.createElement("div");
+	_lineB.className = "lineB";
+	_closeBtn.appendChild(_lineB);
+	GLBEvents(_closeBtn, "click", stopYT, true);
+	GLBEvents(_closeBtn, "touchstart", stopYT, true);
+	GLBEvents(_closeBtn, "touchend", cancelTouch, true);
+	function cancelTouch(e){
+		e.stopPropagation();
+		e.preventDefault();
+	}
+	//Black fullscreen circle
+	var _animBg = document.createElement("div");
+	_animBg.className = "animBg";
+	
+	_this.load = function(yt, eventTarget){
+		_yt = yt;
+		
+		if(eventTarget && !GLB._isMobile){
+			var _x = eventTarget.offsetLeft, _y = eventTarget.getBoundingClientRect().top;
+			//Read position to start
+			document.body.appendChild(_animBg);
+			TweenLite.set(_animBg, {x:_x, y:_y, scale:1, transformOrigin:"50% 50%"});
+			var _distCorner = Math.sqrt(Math.pow(GLB._vw/2, 2) + Math.pow(GLB._reliableSh/2, 2));
+			TweenLite.to(_animBg, .3, {x:GLB._vw/2-110, y:GLB._reliableSh/2-110, scale:_distCorner/220 * 2, delay:.05, transformOrigin:"50% 50%", ease:Quad.easeOut, onStart:onStart, onComplete:doLoad});
+		}
+		else doLoad();
+		//Listen for pagechange ti hide this
+		GLBEvents(window, "pageChange", pageChanged, true);
+	}
+	function pageChanged(e){
+		stopYT(null);
+	}
+	function onStart(){
+		_animBg.style.display = "block";
+	}
+	function doLoad(){
+		//Load Youtube
+		GLBEvents(window, "YoutubeReady", playYT, true);
+		loadYoutube();
+	}
+	function playYT(e){
+		//console.log("play yt", _yt);
+		GLBEvents(window, "YoutubeReady", playYT, false);
+		_vars = {'fs':1, 'autohide':1, 'autoplay':1, 'controls':1, 'suggestedQuality':'hd1080', 'disablekb':1, 'html5':1, 'playsinline':1, 'modestbranding':0, 'showinfo':0, 'rel':0, 'enablejsapi':1};//'origin':'http://nmic.dk'
+		document.body.appendChild(_playerCon);
+		document.body.appendChild(_closeBtn);
+		_ytPlayer = new YT.Player('CaseVideoYoutubePlayer', {videoId:_yt, playerVars:_vars, events:_events});
+	}
+	function onPlayerReady(e){
+		//console.log("onPlayerReady", e.data);
+		_animBg.style.display = "none";
+	}
+	function onPlayerStateChange(e){
+		//console.log("State", e.data);
+		if(e.data == 0) console.log("Video ended"), stopYT(null);
+	}
+	
+	function stopYT(e){
+		e.stopPropagation();
+		e.preventDefault();
+		GLBEvents(window, "pageChange", pageChanged, false);
+		console.log("stopYT");
+		if(_ytPlayer){
+			_ytPlayer.stopVideo();
+			_ytPlayer.destroy();
+		}
+		try{
+			_playerCon = document.getElementById("CaseVideoYoutubePlayer");
+			document.body.removeChild(_playerCon);
+			document.body.removeChild(_closeBtn);
+			if(!GLB._isMobile) document.body.removeChild(_animBg);
+			window.dispatchEvent(GLBCustomEvent("YTStopped", 0));
+		}
+		catch(e){
+			console.log("Error removing YT player");
+		}
+		_ytPlayer = null;
+	}
+}
+
+function InLineYoutubePlayer(_yt, _parent){
+	var _this = this;
+	var _ytPlayer;
+	var _vars, _events = {'onReady': onPlayerReady,'onStateChange': onPlayerStateChange};
+	var _me = document.createElement("div");
+	_me.className = "youtube";
+	var _playerCon = document.createElement("div");
+	_playerCon.setAttribute("id", "InlineYoutubePlayer");
+	var _overlay = document.createElement("div");
+	_overlay.className = "hitLayer";
+	if(!GLB._isMobile) _me.appendChild(_overlay);
+	_me.appendChild(_playerCon);
+	_parent.appendChild(_me);
+	
+	var _loaded = false, _created = false, _paused = true;
+	
+	_this.play = function(){
+		//console.log("_this.play")
+		if(_created) _ytPlayer.playVideo();
+		_paused = false;
+	}
+	_this.pause = function(){
+		//console.log("_this.pause")
+		if(_created) _ytPlayer.stopVideo();
+		_paused = true;
+	}
+	_this.currentTime = 0;
+	_this.seek = function(){
+		//go to currentTime
+		if(_created) _ytPlayer.seekTo(_this.currentTime);
+	}
+	_this.setMobileAspect = function(){
+		_me.style.width = GLB._vw + "px", _me.style.height = GLB._vw*9/16 + "px";
+	}
+	
+	_this.load = function(){
+		if(_loaded) return;
+		_loaded = true;
+		//Load Youtube
+		GLBEvents(window, "YoutubeReady", playYT, true);
+		loadYoutube();
+	}
+	function playYT(e){
+		//console.log("inlineYT")
+		GLBEvents(window, "YoutubeReady", playYT, false);
+		_vars = {'fs':1, 'autohide':1, 'autoplay':0, 'controls':0, 'suggestedQuality':'hd1080', 'disablekb':1, 'html5':1, 'playsinline':1, 'modestbranding':0, 'showinfo':0, 'rel':0, 'enablejsapi':1};//'origin':'http://nmic.dk'
+		_ytPlayer = new YT.Player('InlineYoutubePlayer', {videoId:_yt, playerVars:_vars, events:_events});
+	}
+	function onPlayerReady(e){		
+		//console.log("onPlayerReady", e.data);
+		_created = true;
+	}
+	function onPlayerStateChange(e){
+		//console.log("State", e.data);
+		if(e.data == 1 && _paused){
+			console.log("Force stop!");
+			_ytPlayer.stopVideo();
+		}
+	}
+	
+	function stopYT(e){
+		//console.log("stopYT");
+		try{
+			_ytPlayer.stopVideo();
+			_ytPlayer.destroy();
+			_playerCon = document.getElementById("InlineYoutubePlayer");
+			_me.removeChild(_playerCon);
+			_ytPlayer = null;
+			_playerCon = null;
+		}
+		catch(e){
+			console.log("Error removing YT player");
+		}
+	}
+	_this.destroy = function(){
+		GLBEvents(window, "YoutubeReady", playYT, false);
+		stopYT();
+		_parent.removeChild(_me);
+		if(!GLB._isMobile) _me.removeChild(_overlay);
+		_me = null;
+		_overlay = null;
+	}
+}
+
+function CaseGalleryArrow(_id, _holder, _container, _themeColor, _starthidden) {
+    var _this = this;
+    var _me = document.createElement("div");
+    var _bg = document.createElement("div");
+    _bg.className = "arrowBg";
+	var _isOn = !_starthidden;
+	if(_themeColor != "initial") _bg.style.backgroundColor = _themeColor;
+	else _bg.style.backgroundColor = "#df475c";
+	
+    var _arrow = document.createElement("div");
+    if (_id == -1) _me.className = "arrowBtn left", _arrow.className = "arrowLeft";
+    else if (_id == 1) _me.className = "arrowBtn right", _arrow.className = "arrowRight";
+    _me.appendChild(_bg);
+    _me.appendChild(_arrow);
+    _container.appendChild(_me);
+
+    function over(e) {
+		TweenLite.killTweensOf(_arrow);
+		TweenLite.to(_arrow, .15, {x:25*_id, autoAlpha:0, ease:Linear.easeNone});
+		TweenLite.set(_arrow, {x:-25*_id, ease:Cubic.easeOut, delay:.15});
+		TweenLite.to(_arrow, .2, {x:2*_id, autoAlpha:1, ease:Cubic.easeOut, delay:.15});
+    }
+    function out(e) {
+		TweenLite.to(_arrow, .2, {x:0, autoAlpha:1, ease:Cubic.easeOut});
+    }
+    function clicked(e) {
+        e.stopPropagation();
+        e.preventDefault();
+		if(!GLB._isTouch) TweenLite.to(_bg, .3, {scale:1, ease:Quad.easeOut, force3D:true});
+        _holder.dispatchEvent(GLBCustomEvent("GLBSwipe", _id));
+    }
+	function down(e){
+		TweenLite.to(_bg, .1, {scale:.9, ease:Linear.easeNone, force3D:true});
+	}
+	function addListeners(){
+		if(!GLB._isTouch){
+			GLBEvents(_me, "mouseenter", over, true);
+			GLBEvents(_me, "mouseleave", out, true);
+			GLBEvents(_me, "mousedown", down, true);
+		}
+		else GLBEvents(_me, "touchstart", clicked, true);
+		GLBEvents(_me, "click", clicked, true);
+	}
+	function removeListeners(){
+		if(!GLB._isTouch){
+			GLBEvents(_me, "mouseenter", over, false);
+			GLBEvents(_me, "mouseleave", out, false);
+			GLBEvents(_me, "mousedown", down, false);
+		}
+		else GLBEvents(_me, "touchstart", clicked, false);
+		GLBEvents(_me, "click", clicked, false);
+	}
+	
+	_this.animIn = function(_d){
+		if(_isOn) return;
+		_isOn = true;
+		TweenLite.killTweensOf(_bg);
+		TweenLite.set(_bg, {autoAlpha:1, scale:.7, delay:_d, force3D:true});
+		TweenLite.to(_bg, .6, {scale:1, delay:_d, ease:Back.easeOut, force3D:true});
+		TweenLite.to(_arrow, .6, {autoAlpha:1, ease:Quad.easeOut, delay:_d});
+		addListeners();
+	}
+	_this.animOut = function(){
+		if(!_isOn) return;
+		_isOn = false;
+		removeListeners();
+		TweenLite.killTweensOf(_bg);
+		TweenLite.killTweensOf(_arrow);
+		TweenLite.to(_bg, .15, {autoAlpha:0, scale:.7, ease:Linear.easeNone, force3D:true});
+		TweenLite.to(_arrow, .15, {autoAlpha:0, ease:Linear.easeNone});
+	}
+	if(_starthidden){
+		TweenLite.set(_bg, {autoAlpha:0, scale:.7, force3D:true});
+		TweenLite.set(_arrow, {autoAlpha:0});
+	}
+	else addListeners();
+}
+
+function CaseEnd(_parent){
+	var _this = this;
+	//Scroll activation
+	_this._h = 160;
+	_this._offsetY = GLB._relH*2;
+	var _curY = 0, _newY = 0;
+	var _f3d = false, _hidden = true;
+	
+	var _me = document.createElement("div");
+	_me.className = "end";
+	_parent.appendChild(_me);
+	
+	//Setup navigation
+	var _prev = _parent.previousElementSibling, _next = _parent.nextElementSibling;
+	var _prevBtn, _nextBtn, _overviewBtn;
+	if(_prev && _prev.className.indexOf("case") != -1) _prevBtn = new CaseNavBtn(0, _prev, _me, _parent);
+	if(_next && _next.className.indexOf("case") != -1) _nextBtn = new CaseNavBtn(1, _next, _me, _parent);
+	_overviewBtn = new CaseNavBtn(-1, "CASEOVERSIGT", _me, _parent);//to-do translation
+	
+	_this.moveY = function(_y){
+		if(GLB._isMobile) return;
+		else{
+			_newY = _y+_this._offsetY;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				if(_hidden) show();
+			}
+			else if(!_hidden && !GLB._isTouch) hide();
+		}
+		if(_hidden) return;
+		_newY -= 1; //For prettier overlaps
+		if(_curY != _newY){
+			_curY = _newY;
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+		}
+	}
+	
+	_this.resized = function(){
+		if(GLB._isMobile){
+			_this._h = 79;
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+		else _this._h = 159;
+	}
+	_this.layoutUpdated = function(){}
+	
+	//About page is activated
+	_this.activate = function(){
+		if(!GLB._isMobile) TweenLite.set(_me, {y:_this._offsetY, force3D:_f3d});
+	}
+	//About page is deactivated
+	_this.deactivate = function(){
+		if(!_hidden) hide();
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	function hide(){
+		_hidden = true;
+		if(!GLB._isMobile) _me.style.visibility = "hidden";
+	}
+}
+function CaseNavBtn(_id, _meHTML, _parent, _container){
+	var _this = this;
+	var _me = document.createElement("div");
+	if(_id == -1) _me.className = "navBtn center";
+	else if(_id == 0) _me.className = "navBtn prev";
+	else _me.className = "navBtn next";
+	var _f3d = true;
+	
+	//Text
+	var _label = document.createElement("div");
+	_label.className = "label";
+	
+	if(_id != -1){
+		_label.textContent = _meHTML.getAttribute("data-title") || "";
+		//Arrow
+		var _arrow = document.createElement("div");
+		_arrow.className = "arrow";
+		var _lineA = document.createElement("div");
+		_lineA.className = "line";
+		_arrow.appendChild(_lineA);
+		var _lineB = document.createElement("div");
+		_lineB.className = "line";
+		_arrow.appendChild(_lineB);
+		TweenLite.set(_lineA, {rotation:-58, transformOrigin:"0.5px 0", force3D:_f3d});
+		TweenLite.set(_lineB, {rotation:58, transformOrigin:"0.5px 0", force3D:_f3d});
+		if(_id == 1) TweenLite.set(_arrow, {scaleX:-1, transformOrigin:"50% 0"});
+		_me.appendChild(_arrow);
+	}
+	else _label.textContent = _meHTML;
+	_me.appendChild(_label);
+	
+	_parent.appendChild(_me);
+	
+	if(!GLB._isTouch){
+		if(_id != -1){
+			GLBEvents(_me, "mouseenter", over, true);
+			GLBEvents(_me, "mouseleave", out, true);
+		}
+		GLBEvents(_me, "click", clicked, true);
+	}
+	GLBEvents(_me, "touchstart", clicked, true);
+	function clicked(e){
+		e.preventDefault();
+		e.stopPropagation();
+		if(_id == -1){
+			_router.setUrl("/");
+			return;
+		}
+		var _url = _meHTML.querySelector("a").getAttribute("href");
+		//console.log("clicked", _url);
+		_router.setUrl(_url);
+	}
+	function over(e){
+		if(_id != -1){
+			TweenLite.to(_lineA, .3, {rotation:-52, transformOrigin:"0.5px 0", force3D:_f3d, ease:Back.easeOut});
+			TweenLite.to(_lineB, .3, {rotation:52, transformOrigin:"0.5px 0", force3D:_f3d, ease:Back.easeOut});
+			TweenLite.to(_arrow, .4, {x:(_id-.5)*4, ease:Back.easeOut});
+			TweenLite.to(_label, .2, {x:(_id-.5)*4, ease:Cubic.easeOut});
+		}
+	}
+	function out(e){
+		if(_id != -1){
+			TweenLite.to(_lineA, .3, {rotation:-58, transformOrigin:"0.5px 0", force3D:_f3d, ease:Back.easeOut});
+			TweenLite.to(_lineB, .3, {rotation:58, transformOrigin:"0.5px 0", force3D:_f3d, ease:Back.easeOut});
+			TweenLite.to(_arrow, .2, {x:0, ease:Cubic.easeOut});
+			TweenLite.to(_label, .2, {x:0, ease:Cubic.easeOut});
+		}
+	}
+}
+
+//current time, start value, change in value, duration
+function easeOutQuad(t, b, c, d) {
+	t /= d;
+	return -c * t*(t-2) + b;
+}
+function easeInQuad(t, b, c, d) {
+	t /= d;
+	return c*t*t + b;
+}
+function easeInOutSine(t, b, c, d) {
+	return -c/2 * (Math.cos(Math.PI*t/d) - 1) + b;
+}
+var _openTime = .8, _realOpenTime = .8, _closeTime = .7;
+var _introTime = 5600;//5600
+var _firstTimeCases = true, _fastClosing = false;

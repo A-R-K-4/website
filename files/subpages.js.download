@@ -1,0 +1,896 @@
+function ContentPageTemplate(_content, _className){
+	var _this = this;
+	var _container = _content.getElementsByClassName(_className)[0];
+	_this._url = _container.getAttribute("data-url") || "";
+	var _built = false;
+	var _modules = [], _numModules = 0;
+	
+	_this.activate = function(){
+		//console.log("activate ContentPageTemplate", _className, _built);
+		if(!_built){
+			_built = true;
+			var _sections = _container.getElementsByTagName("section");
+			_numModules = _sections.length;
+			for(var i=0;i<_numModules;i++) _modules.push(getModule(_className, _sections[i].className, _container));
+			//Add end module (blue tilted bar)
+			_modules.push(getModule("about", "end", _container))
+			_numModules = _modules.length;
+		}
+		_lastState = "unset";
+		for(var i=0;i<_numModules;i++) _modules[i].activate();
+		_container.style.display = "block";
+		GLBEvents(window, "resize", resized, true);
+		GLBEvents(window, "LayoutUpdate", layoutUpdated, true);
+		//Listen for images loading to update sibling position according to element's new height
+		GLBEvents(_container, "updateSiblings", layoutUpdated, true);
+		setTimeout(resizeAndLayout, 100); //Needed for text backgrounds, Splittext must have been called first.
+		//Hide topbar
+		window.dispatchEvent(GLBCustomEvent("hideMenu", 0));
+		manageListeners();
+	}
+	_this.deactivate = function(){
+		//console.log("deactivate ContentPageTemplate", _className);
+		for(var i=0;i<_numModules;i++) _modules[i].deactivate();
+		GLBEvents(_content, "scrolledY", moveY, false);
+		GLBEvents(window, "resize", resized, false);
+		GLBEvents(window, "LayoutUpdate", layoutUpdated, false);
+		GLBEvents(window, "scroll", scrolledMobile, false);
+		GLBEvents(_container, "updateSiblings", layoutUpdated, false);
+		_container.style.display = "none";
+	}
+	
+	function resizeAndLayout(){
+		resized(null);
+		layoutUpdated(null);
+	}
+	
+	//Switch between mobile/desktop listeners
+	var _lastState = "unset";
+	function manageListeners(){
+		if(GLB._isMobile && _lastState == true) return;
+		else if(!GLB._isMobile && _lastState == false) return;
+		_lastState = GLB._isMobile;
+		if(GLB._isMobile){
+			GLBEvents(_content, "scrolledY", moveY, false);
+			GLBEvents(window, "scroll", scrolledMobile, true);
+			document.body.style.overflowY = "auto";
+			_scrollNav.disableForNativescroll();
+			scrolledMobile(null);
+		}
+		else{
+			GLBEvents(_content, "scrolledY", moveY, true);
+			GLBEvents(window, "scroll", scrolledMobile, false);
+			_scrollNav.setState(1); //Vertical scroll
+			document.body.style.overflowY = "hidden";
+		}
+		window.scrollTo(0,0);
+	}
+	
+	//Write
+	function resized(e){
+		//console.log("resized", _built)
+		for(var i=0;i<_numModules;i++) _modules[i].resized();
+		manageListeners();
+	}
+	//Read
+	function layoutUpdated(e){
+		//console.log("layoutUpdated", _built);
+		//Get all heights
+		var _accuH = 0;
+		for(var i=0;i<_numModules;i++){
+			_modules[i].layoutUpdated();
+			if(i > 0) _modules[i]._offsetY = _accuH;
+			_accuH += _modules[i]._h;
+		}
+		_scrollNav.setLimitY(-(_accuH-GLB._relH));
+	}
+	
+	function moveY(e){
+		for(var i=0;i<_numModules;i++) _modules[i].moveY(e.detail);
+	}
+	function scrolledMobile(e){
+		for(var i=0;i<_numModules;i++) _modules[i].moveY(GLB._windowScrollY);
+	}
+}
+
+function AboutTop(_parent){
+	var _this = this;
+	//Scroll activation
+	_this._h = GLB._relH;
+	
+	var _me = _parent.getElementsByClassName("top")[0];
+	var _f3d = false;
+	var _hidden = true;
+	var _imgDiv = _me.getElementsByClassName("image")[0];
+	var _img = new GLBImage(_imgDiv.getAttribute("data-url"), _imgDiv, null, null, "img", imgLoaded, true);
+	var _h1 = new H1WithBg(_me, _me.querySelector("h1"));
+	var _showDelay;
+	var _blackBar = new BlackBar(_parent.getElementsByTagName("p")[0]);
+	
+	function imgLoaded(e){
+		resizeImg();
+		_img.img.style.opacity = 1;
+	}
+	_img.load();
+	
+	var _percent = 0, _curY = 0, _newY = 0;
+	_this.moveY = function(_y){
+		_percent = Math.abs(_y/_this._h);
+		if(_percent >= 0 && _percent <= 2){
+			_newY = -(Math.min(_percent, 3)) * _this._h;
+			if(!GLB._isMobile) _newY *= .8;//Parallax effect
+		}
+		else _newY = -_this._h;
+		//Show/hide
+		if(_newY >= -_this._h && _newY <= 0){
+			if(_hidden) show();
+		}
+		else if(!_hidden && !GLB._isTouch) hide();
+		if(_hidden) return;
+		if(!GLB._isMobile && _curY != _newY){
+			_curY = _newY;
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+		}
+	}
+	
+	_this.resized = function(){
+		if(_h1) _h1.resized();
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			//Image in top, followed by text are
+			show();
+		}
+		resizeImg();
+	}
+	function resizeImg(){
+		if(GLB._isMobile){
+			_imgDiv.style.height = GLB._relH + "px";
+			_img.scaleTo("fill", GLB._vw, GLB._relH, "center", "center");
+		}
+		else{
+			_imgDiv.style.height = GLB._relH + "px";
+			_img.scaleTo("fill", GLB._vw*.5+30, GLB._relH, "center", "center");
+		}
+	}
+	_this.layoutUpdated = function(){
+		_this._h = _me.offsetHeight;
+	}
+	
+	//About page is activated
+	_this.activate = function(){}
+	//About page is deactivated
+	_this.deactivate = function(){
+		if(!_hidden) hide();
+	}
+	
+	function show(){
+		_hidden = false;
+		//Scale image
+		TweenLite.killTweensOf(_img.img);
+		if(!GLB._isMobile){
+			TweenLite.set(_img.img, {scale:1.2, force3D:true});
+			TweenLite.to(_img.img, 20, {scale:1, ease:Quad.easeInOut, force3D:true});
+		}
+		_me.style.visibility = "visible";
+		if(_h1) _showDelay = setTimeout(_h1.animIn, 100, 0);
+	}
+	function hide(){
+		_hidden = true;
+		if(!GLB._isMobile) _me.style.visibility = "hidden";
+		TweenLite.killTweensOf(_img.img);
+		clearTimeout(_showDelay);
+		if(_h1) _h1.animOut(false);
+	}
+}
+
+function AboutValues(_parent){
+	var _this = this;
+	//Scroll activation
+	_this._h = GLB._relH;
+	_this._offsetY = GLB._relH*2;
+	var _curY = 0, _newY = 0, _extraTiltH = 200;
+	
+	var _me = _parent.getElementsByClassName("value")[0];
+	var _whiteBottom = document.createElement("div");
+	if(GLB._iOS) _whiteBottom.className = "bottom unjagMyEdge";
+	else _whiteBottom.className = "bottom";
+	_me.appendChild(_whiteBottom);
+	
+	var _f3d = true, _hidden = true, _animIn = false;
+	var _imgDiv = _me.getElementsByClassName("image")[0];
+	var _img = new GLBImage(_imgDiv.getAttribute("data-url"), _imgDiv, null, null, "img", imgLoaded, true);
+	var _h1 = new H1WithBg(_me, _me.querySelector("h1")), _h2 = new H1WithBg(_me, _me.querySelector("h2"));
+	var _showDelay;
+	
+	function imgLoaded(e){
+		_img.img.style.opacity = 1;
+		_this._h = _me.offsetHeight;
+		_parent.dispatchEvent(GLBCustomEvent("updateSiblings", 0));
+	}
+	_img.load();
+	
+	_this.moveY = function(_y){
+		//Check for animIn. Mobile only when scrolling down (headers are in top of module)
+		if(GLB._isMobile){
+			_newY = _this._offsetY-_y;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				if(!_animIn){
+					_animIn = true;
+					titleAnim();
+				}
+				//console.log("In view");
+			}
+			else{
+				//console.log("Out of view");
+			}
+		}
+		else{
+			_newY = _y+_this._offsetY;
+			//Show/hide
+			if(_newY >= -(_this._h+_extraTiltH) && _newY <= GLB._relH){
+				if(_hidden) show();
+			}
+			else if(!_hidden && !GLB._isTouch) hide();
+			if(_newY <= (GLB._relH - 100) && _newY >= (-_this._h + 50)){
+				if(!_hidden && !_animIn){
+					_animIn = true;
+					_showDelay = setTimeout(titleAnim, 300);
+				}
+			}
+			else if(!GLB._isTouch){
+				if(_animIn){
+					_animIn = false;
+					titleReset();
+				}
+			}
+		}
+		if(_hidden) return;
+		if(!GLB._isMobile && _curY != _newY){
+			_curY = _newY;
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+		}
+	}
+	
+	_this.resized = function(){
+		_extraTiltH = 200;//Mobile takes care of this with "auto" height
+		//_img.scaleTo("fill", GLB._vw*.5+30, GLB._relH, "center", "center");
+		if(_h1) _h1.resized();
+		if(_h2) _h2.resized();
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+	}
+	_this.layoutUpdated = function(){
+		_this._h = _me.offsetHeight;
+	}
+	
+	//About page is activated
+	_this.activate = function(){}
+	//About page is deactivated
+	_this.deactivate = function(){
+		if(!_hidden) hide();
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	function titleAnim(){
+		_h1.animIn(0);
+		_h2.animIn(.1);
+	}
+	function titleReset(){
+		clearTimeout(_showDelay);
+		_h1.animOut(false);
+		_h2.animOut(false);
+	}
+	function hide(){
+		_hidden = true;
+		_animIn = false;
+		if(!GLB._isMobile) _me.style.visibility = "hidden";
+		titleReset();
+	}
+}
+
+function AboutPerspective(_parent){
+	var _this = this;
+	//Scroll activation
+	_this._h = GLB._relH;
+	_this._offsetY = GLB._relH*2;
+	var _curY = 0, _newY = 0;
+	
+	var _me = _parent.getElementsByClassName("perspective")[0];
+	var _f3d = (GLB._isTouch && !GLB._isMobile), _hidden = true, _animIn = false;
+	var _h1 = new H1WithBg(_me, _me.querySelector("h1"));
+	var _showDelay;
+	//Three boxes
+	var _boxContainer = _me.getElementsByClassName("boxes")[0];
+	var _boxHtml = _boxContainer.getElementsByClassName("box");
+	var _numBoxes = _boxHtml.length;
+	var _boxes = [];
+	for(var i=0;i<_numBoxes;i++) _boxes.push(new PerspectiveBox(_boxHtml[i], 380, 350));
+	
+	_this.moveY = function(_y){
+		if(GLB._isMobile){
+			_newY = _this._offsetY-_y;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				if(!_animIn ){
+					_animIn = true;
+					titleAnim();
+				}
+			}
+		}
+		else{
+			_newY = (_y+_this._offsetY)*.9;//Parallax effect
+			//Show/hide
+			if(_newY >= -_this._h && _newY <= GLB._relH){
+				if(_hidden) show();
+			}
+			else if(!_hidden && !GLB._isTouch) hide();
+
+			//Check for animIn
+			if(_newY <= (GLB._relH - 100) && _newY >= (-_this._h + 50)){
+				if(!_hidden && !_animIn /*_newY >= -_this._h && */){
+					_animIn = true;
+					_showDelay = setTimeout(titleAnim, 100);
+				}
+			}
+			else if(!GLB._isTouch){
+				if(_animIn){
+					_animIn = false;
+					titleReset();
+				}
+			}
+		}
+		if(_hidden) return;
+		if(!GLB._isMobile && _curY != _newY){
+			_curY = _newY;
+			for(var i=0;i<_numBoxes;i++) _boxes[i].moveY(_newY);
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+		}
+	}
+	
+	_this.resized = function(){
+		if(_h1) _h1.resized();
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+	}
+	_this.layoutUpdated = function(){
+		_this._h = _me.offsetHeight;
+	}
+	
+	//About page is activated
+	_this.activate = function(){}
+	//About page is deactivated
+	_this.deactivate = function(){
+		if(!_hidden) hide();
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	function titleAnim(){
+		_h1.animIn(0, true);
+	}
+	function titleReset(){
+		clearTimeout(_showDelay);
+		_h1.animOut(true);
+	}
+	function hide(){
+		_hidden = true;
+		_animIn = false;
+		if(!GLB._isMobile) _me.style.visibility = "hidden";
+		titleReset();
+	}
+}
+function PerspectiveBox(_me, _w, _h){
+	var _this = this;
+	var _offsetY = 0;
+	var _over = false, _useOffsetMethod = false;
+	var _max = 16;//_max=angle
+	_this.moveY = function(_y){
+		_offsetY = _y;
+	}
+	//Desktop below:
+	if(!GLB._isTouch){
+		GLBEvents(_me, "mouseenter", over, true);
+		GLBEvents(_me, "mouseleave", out, true);
+	}
+	function over(e){
+		//console.log("Over", _offsetY);
+		_over = true;
+		TweenLite.ticker.addEventListener('tick', rotate);
+		//Start floating relative to mouse position
+		GLBEvents(_me, "mousemove", moved, true);
+		if(e.offsetX) _useOffsetMethod = true;
+		else _useOffsetMethod = false;
+		if(GLB._isSafari) TweenLite.to(_me, .6, {z:40, force3D:true, ease:Cubic.easeOut});
+		else TweenLite.to(_me, .6, {scale:1.05, force3D:true, ease:Cubic.easeOut});
+		_me.style.zIndex = 3;
+	}
+	function out(e){
+		//console.log("Out");
+		_over = false;
+		_rotX = _rotY = 0;
+		if(GLB._isSafari) TweenLite.to(_me, .6, {z:4, force3D:true, ease:Cubic.easeOut});
+		else TweenLite.to(_me, .6, {scale:1, force3D:true, ease:Cubic.easeOut});
+		_me.style.zIndex = 2;
+	}
+	
+	var _relX = 0, _relY = 0, _percentX = 0, _percentY = 0, _rotY = 0, _rotX = 0, _tweenedRotX = 0, _tweenedRotY = 0;
+	function moved(e){
+		if(_useOffsetMethod) _relX = e.offsetX, _relY = e.offsetY;
+		else _relX = e.layerX, _relY = e.layerY - _offsetY;
+		_percentX = _relX / _w, _percentY = _relY / _h;
+		_rotY = (_percentX-.5) * _max, _rotX = -(_percentY-.5) * _max;
+		//console.log(_percentX, _percentY)
+	}
+	function stopped(){
+		if(!GLB._isSafari) _me.style.zIndex = 1;
+		TweenLite.ticker.removeEventListener('tick', rotate);
+	}
+	function rotate(e){
+		//Render 3d rotation
+		_tweenedRotX += (_rotX-_tweenedRotX) * .1;
+		_tweenedRotY += (_rotY-_tweenedRotY) * .1;
+		TweenLite.set(_me, {rotationY:_tweenedRotY, rotationX:_tweenedRotX, transformPerspective:1000, force3D:true});
+		if(!_over && (Math.abs(_tweenedRotX) < .1 || Math.abs(_tweenedRotY) < .1)){
+			stopped();
+		}
+	}
+}
+
+function AboutCross(_parent){
+	var _this = this;
+	//Scroll activation
+	_this._h = GLB._relH;
+	_this._offsetY = GLB._relH*2;
+	var _curY = 0, _newY = 0;
+	
+	var _me = _parent.getElementsByClassName("cross")[0];
+	var _f3d = (GLB._isTouch && !GLB._isMobile), _hidden = true, _animIn = false;
+	var _h1 = new H1WithBg(_me, _me.querySelector("h1"));
+	var _showDelay;
+	
+	_this.moveY = function(_y){
+		if(GLB._isMobile){
+			_newY = _this._offsetY-_y;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				if(!_animIn ){
+					_animIn = true;
+					titleAnim();
+				}
+			}
+		}
+		else{
+			_newY = _y+_this._offsetY;
+			//Show/hide
+			if(_newY >= -_this._h && _newY <= GLB._relH){
+				if(_hidden) show();
+			}
+			else if(!_hidden && !GLB._isTouch) hide();
+
+			//Check for animIn
+			if(_newY <= (GLB._relH - 100) && _newY >= (-_this._h + 50)){
+				if(!_hidden && !_animIn){
+					_animIn = true;
+					_showDelay = setTimeout(titleAnim, 100);
+				}
+			}
+			else if(!GLB._isTouch){
+				if(_animIn){
+					_animIn = false;
+					titleReset();
+				}
+			}
+		}
+		if(_hidden) return;
+		if(!GLB._isMobile && _curY != _newY){
+			_curY = _newY;
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+		}
+	}
+	
+	_this.resized = function(){
+		if(_h1) _h1.resized();
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+	}
+	_this.layoutUpdated = function(){
+		_this._h = _me.offsetHeight;
+	}
+	
+	//About page is activated
+	_this.activate = function(){}
+	//About page is deactivated
+	_this.deactivate = function(){
+		if(!_hidden) hide();
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	function titleAnim(){
+		_h1.animIn(0);
+	}
+	function titleReset(){
+		clearTimeout(_showDelay);
+		_h1.animOut(false);
+	}
+	function hide(){
+		_hidden = true;
+		_animIn = false;
+		if(!GLB._isMobile) _me.style.visibility = "hidden";
+		titleReset();
+	}
+}
+
+function AboutBrands(_parent){
+	var _this = this;
+	//Scroll activation
+	_this._h = GLB._relH;
+	_this._offsetY = GLB._relH*2;
+	var _curY = 0, _newY = 0;
+	
+	var _me = _parent.getElementsByClassName("brands")[0];
+	var _f3d = (GLB._isTouch && !GLB._isMobile), _hidden = true, _animIn = false;
+	//var _blackBar = new BlackBar(_me);
+	var _h1 = new H1WithBg(_me, _me.querySelector("h1"));
+	var _showDelay;
+
+	_this.moveY = function(_y){
+		if(GLB._isMobile){
+			_newY = _this._offsetY-_y;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				if(!_animIn ){
+					_animIn = true;
+					titleAnim();
+				}
+			}
+		}
+		else{
+			_newY = (_y+_this._offsetY)*.9;//Parallax effect
+			//Show/hide
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				//console.log("YeP", _newY, -_this._h, GLB._relH)
+				if(_hidden) show();
+			}
+			else if(!_hidden && !GLB._isTouch) hide();
+
+			//Check for animIn
+			if(_newY <= (GLB._relH - 100) && _newY >= (-_this._h + 50)){
+				if(!_hidden && !_animIn /*_newY >= -_this._h && */){
+					_animIn = true;
+					_showDelay = setTimeout(titleAnim, 100);
+				}
+			}
+			else if(!GLB._isTouch){
+				if(_animIn){
+					_animIn = false;
+					titleReset();
+				}
+			}
+		}
+		if(_hidden) return;
+		if(!GLB._isMobile && _curY != _newY){
+			_curY = _newY;
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+		}
+	}
+	
+	_this.resized = function(){
+		if(_h1) _h1.resized();
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+	}
+	_this.layoutUpdated = function(){
+		_this._h = _me.offsetHeight;
+	}
+	
+	//About page is activated
+	_this.activate = function(){}
+	//About page is deactivated
+	_this.deactivate = function(){
+		if(!_hidden) hide();
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	function titleAnim(){
+		_h1.animIn(0);
+	}
+	function titleReset(){
+		clearTimeout(_showDelay);
+		_h1.animOut(false);
+	}
+	function hide(){
+		_hidden = true;
+		_animIn = false;
+		if(!GLB._isMobile) _me.style.visibility = "hidden";
+		titleReset();
+	}
+}
+
+function AboutEnd(_parent){
+	var _this = this;
+	//Scroll activation
+	_this._h = 80;
+	_this._offsetY = GLB._relH*2;
+	var _curY = 0, _newY = 0;
+	
+	var _me = document.createElement("div");
+	if(GLB._iOS) _me.className = "end unjagMyEdge";
+	else _me.className = "end";
+	_parent.appendChild(_me);
+	var _f3d = true, _hidden = true;
+
+	_this.moveY = function(_y){
+		_newY = _y+_this._offsetY;
+		
+		if(!GLB._isMobile){
+			//Show/hide
+			if(_newY >= -_this._h && _newY <= (GLB._relH+200)){
+				if(_hidden) show();
+			}
+			else if(!_hidden) hide();
+		}
+		if(_hidden) return;
+		if(!GLB._isMobile && _curY != _newY){
+			_curY = _newY;
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+		}
+	}
+	
+	_this.resized = function(){
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+	}
+	_this.layoutUpdated = function(){}
+	
+	//About page is activated
+	_this.activate = function(){}
+	//About page is deactivated
+	_this.deactivate = function(){
+		if(!_hidden) hide();
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	function hide(){
+		_hidden = true;
+		if(!GLB._isMobile) _me.style.visibility = "hidden";
+	}
+}
+
+function ContactTop(_parent){
+	var _this = this;
+	//Scroll activation
+	_this._h = GLB._relH * 2;
+	_this._offsetY = 0;
+	var _curY = 0, _newY = 0;
+	
+	var _me = _parent.getElementsByClassName("getintouch")[0];
+	var _f3d = (GLB._isTouch && !GLB._isMobile), _hidden = true, _animIn = false; //force3d on tablets
+	
+	if(!GLB._isMobile) _f3d = true;
+	
+	var _h3s = _me.querySelectorAll("h3");
+	var _headers = [new H1WithBg(_me, _me.querySelector("h1")), new H1WithBg(_me, _h3s[0]), new H1WithBg(_me, _h3s[1]), new H1WithBg(_me, _me.querySelector("h2"))];
+	var _showDelay;
+	var _profilesHTML = _me.getElementsByClassName("profile");
+	var _numProfiles = _profilesHTML.length;
+	var _profiles = [];
+	for(var i=0;i<_numProfiles;i++){
+		_profiles.push(new ContactProfile(i, _profilesHTML[i], _parent));
+		_headers.push(_profiles[i]._h4);
+	}
+	var _numHeaders = _headers.length;
+	
+	_blackBar = new BlackBarInside(_me, _me.querySelector("h2"));
+	
+	_this.moveY = function(_y){
+		_newY = _y+_this._offsetY;
+		
+		if(GLB._isMobile){
+			if(_y >= (_this._offsetY-GLB._relH+100)){
+				if(!_animIn ){
+					_animIn = true;
+					titleAnim();
+				}
+			}
+		}
+		else{
+			_newY *= .9;//Parallax effect
+			//Show/hide
+			if(_newY >= -_this._h && _newY <= GLB._relH){
+				if(_hidden) show();
+			}
+			else if(!_hidden && !GLB._isTouch) hide();
+			
+			//Check for animIn
+			if(_newY <= (GLB._relH - 100) && _newY >= (-_this._h + 50)){
+				if(!_hidden && !_animIn){
+					_animIn = true;
+					_showDelay = setTimeout(titleAnim, 100);
+				}
+			}
+			else if(!GLB._isTouch){
+				if(_animIn){
+					_animIn = false;
+					titleReset();
+				}
+			}
+		}	
+		if(_hidden) return;
+		if(!GLB._isMobile && _curY != _newY){
+			_curY = _newY;
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+		}
+	}
+	
+	_this.resized = function(){
+		for(var i=0;i<_numHeaders;i++) _headers[i].resized();
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+	}
+	_this.layoutUpdated = function(){
+		_this._h = _me.offsetHeight;
+	}
+	
+	//About page is activated
+	_this.activate = function(){}
+	//About page is deactivated
+	_this.deactivate = function(){
+		if(!_hidden) hide();
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	function titleAnim(){
+		for(var i=0;i<_numHeaders;i++) _headers[i].animIn(.1*i);
+	}
+	function titleReset(){
+		clearTimeout(_showDelay);
+		for(var i=0;i<_numHeaders;i++) _headers[i].animOut();
+	}
+	function hide(){
+		_hidden = true;
+		_animIn = false;
+		if(!GLB._isMobile) _me.style.visibility = "hidden";
+		titleReset();
+	}
+}
+function ContactProfile(_id, _me, _parent){
+	var _this = this;
+	var _img = new GLBImage(_me.getAttribute("data-img"), _me, null, null, "img", imgLoaded, true);
+	function imgLoaded(e){
+		_parent.dispatchEvent(GLBCustomEvent("updateSiblings", 0));
+	}
+	//Header
+	_this._h4 = new H1WithBg(_me, _me.querySelector("h4"));
+	//Load
+	_img.load();
+}
+
+function ContactWorkForUs(_parent, _class){
+	var _this = this;
+	//Scroll activation
+	_this._h = GLB._relH;
+	_this._offsetY = GLB._relH*2;
+	var _curY = 0, _newY = 0, _extraTiltH = 200, _padding = 0;
+	
+	var _me = _parent.getElementsByClassName(_class)[0];
+	
+	var _f3d = true, _hidden = true, _animIn = false;
+	var _h1 = new H1WithBg(_me, _me.querySelector("h1"));
+	var _showDelay;
+	var _para = 1;
+	var _blackBar;
+	if(_class == "who"){
+		if(GLB._isTouch && !GLB._isMobile) _f3d = true;
+		else _f3d = false;
+		_para = .9; //force3d on tablets
+		_padding = 200;
+	}
+	else{
+		_blackBar = new BlackBar(_me);
+		var _whiteBottom = document.createElement("div");
+		if(GLB._iOS) _whiteBottom.className = "bottom unjagMyEdge";
+		else _whiteBottom.className = "bottom";
+		_me.appendChild(_whiteBottom);
+	}
+		
+	_this.moveY = function(_y){
+		//Check for animIn. Mobile only when scrolling down (headers are in top of module)
+		if(GLB._isMobile){
+			_newY = _this._offsetY-_y;
+			if(_newY <= GLB._relH && _newY > -_this._h){
+				if(!_animIn ){
+					_animIn = true;
+					titleAnim();
+				}
+			}
+		}
+		else{
+			_newY = (_y+_this._offsetY)*_para;
+			//Show/hide
+			if(_newY >= -(_this._h+_extraTiltH) && _newY <= GLB._relH){
+				if(_hidden) show();
+			}
+			else if(!_hidden && !GLB._isTouch) hide();
+			if(_newY <= (GLB._relH - 100) && _newY >= (-_this._h + 50)){
+				if(!_hidden && !_animIn){
+					_animIn = true;
+					_showDelay = setTimeout(titleAnim, 100);
+				}
+			}
+			else if(!GLB._isTouch){
+				if(_animIn){
+					_animIn = false;
+					titleReset();
+				}
+			}
+		}
+		if(_hidden) return;
+		if(!GLB._isMobile && _curY != _newY){
+			_curY = _newY;
+			TweenLite.set(_me, {y:_newY, force3D:_f3d});
+		}
+	}
+	
+	_this.resized = function(){
+		if(_h1) _h1.resized();
+		if(GLB._isMobile){
+			TweenLite.set(_me, {y:0, force3D:_f3d});
+			show();
+		}
+	}
+	_this.layoutUpdated = function(){
+		if(GLB._isMobile) _this._h = _me.offsetHeight;
+		else _this._h = _me.offsetHeight * (1/_para) - _padding;//200 for padding
+	}
+	
+	//About page is activated
+	_this.activate = function(){}
+	//About page is deactivated
+	_this.deactivate = function(){
+		if(!_hidden) hide();
+	}
+	
+	function show(){
+		_hidden = false;
+		_me.style.visibility = "visible";
+	}
+	function titleAnim(){
+		_h1.animIn(0);
+	}
+	function titleReset(){
+		clearTimeout(_showDelay);
+		_h1.animOut(false);
+	}
+	function hide(){
+		_hidden = true;
+		_animIn = false;
+		if(!GLB._isMobile) _me.style.visibility = "hidden";
+		titleReset();
+	}
+}

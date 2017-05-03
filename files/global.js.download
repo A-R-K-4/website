@@ -1,0 +1,413 @@
+/* GLB v 0.1 - Last edit: March 14. 2017 */
+
+/* GLOBAL OBJECT FOR METHODS AVAILABLE FROM EVERYWHERE */
+if(GLB) console.log("ERROR: GLB is a singleton!");
+var GLB = {};
+GLB._mobileBreakpointW = 767.5;
+GLB._isMobile = false;
+GLB._vw = 0, GLB._vh = 0; //Current viewport size
+GLB._maxResW = screen.width, GLB._maxResH = screen.height;
+GLB._wasScrollbarVisible, GLB._scrollbarVisible = false, GLB._oldvwOuter = 0;
+GLB._vwOuter = 0; //Viewport including (optional) scrollbars. Use this value for aligning with css media queries
+GLB._reliableSh = 0; //Touch screens where browserbar hides when scrolling. Use this value for reliable and "constant" values (while not resizing)
+GLB._relH = 0; //Reliable height without closed menu height
+GLB._bodyRect;
+GLB._layoutUpdateTimer;
+var _UA = window.navigator.userAgent;
+//Detection
+GLB._iOS = /(iPad|iPhone|iPod)/g.test(_UA);
+GLB._iosAndChrome = false;
+if(GLB._iOS){
+	if(_UA.match('CriOS')) GLB._iosAndChrome = true;
+}
+GLB._androidVersion = 0, GLB._iOSVersion = 0;
+GLB._isSafari = /^((?!chrome|android).)*safari/i.test(_UA);
+GLB._firefox = _UA.indexOf('Firefox') > -1;
+GLB._firefoxVersion;
+if(GLB._firefox){
+	var _ffmatch = _UA.match(/Firefox\/([0-9]+)\./);
+	GLB._firefoxVersion = _ffmatch ? parseInt(_ffmatch[1]) : 0;
+}
+GLB._isIEVersion = 11;
+function detectIE() {
+	var msie = _UA.indexOf('MSIE ');
+	if (msie > 0) {
+		// IE 10 or older => return version number
+		GLB._isIEVersion = parseInt(_UA.substring(msie + 5, _UA.indexOf('.', msie)), 10);
+		return true;
+	}
+	var trident = _UA.indexOf('Trident/');
+	if (trident > 0) {
+		// IE 11 => return version number
+		var rv = _UA.indexOf('rv:');
+		GLB._isIEVersion = parseInt(_UA.substring(rv + 3, _UA.indexOf('.', rv)), 10);
+		return true;
+	}
+	var edge = _UA.indexOf('Edge/');
+	if (edge > 0) {
+		// Edge (IE 12+) => return version number
+		GLB._isIEVersion = parseInt(_UA.substring(edge + 5, _UA.indexOf('.', edge)), 10);
+		return true;
+	}
+	// other browser
+	return false;
+}
+GLB._isIE = detectIE();
+GLB._supportsPointerEvents = ("pointerEvents" in document.documentElement.style);
+GLB._isTouch = "ontouchstart" in window;
+GLB._dpi = window.devicePixelRatio;
+//Scroll
+GLB._repaintsWhileScrolling = true; //Desktop, iOS8=<, Android v4=< supports repaint while scrolling
+GLB._windowScrollY = 0;
+GLB._oldIE = false;
+GLB._thresholdSwipe = 8;
+
+GLB._ignoreScroll = false;
+GLB._caseW = 0;
+GLB._menuClosedH = 54;
+
+
+GLB._useClipPath = !(GLB._isIE || GLB._isTouch || (GLB._firefox && GLB._firefoxVersion < 53));
+//GLB._useClipPath = false; //DEBUG
+
+if(GLB._isIE && GLB._isIEVersion < 11) GLB._oldIE = true;
+//Set repaint while scrolling
+if(GLB._isTouch){
+	if(GLB._iOS){
+		//iOS version
+		var _av = navigator.appVersion;
+		var v = (_av).match(/OS (\d+)_(\d+)_?(\d+)?/);
+		var ver = [parseInt(v[1], 10), parseInt(v[2], 10), parseInt(v[3] || 0, 10)];
+		GLB._iOSVersion = ver[0];
+		//Chrome from version 48 repaints
+		var _chromeVersion = 47;
+		if(GLB._iosAndChrome){
+			try{_chromeVersion = parseInt(_av.substr(_av.indexOf("CriOS/")+6, 2)) || 47;}
+			catch(e){}
+		}
+		if(GLB._iOSVersion < 8 || (GLB._iosAndChrome && _chromeVersion <= 47) || navigator.standalone) GLB._repaintsWhileScrolling = false;
+	}
+	else{
+		//Android version
+		var ua = _UA.toLowerCase();
+	    var match = ua.match(/android\s([0-9\.]*)/);
+		if(match){
+			var _androidVersion = match ? match[1] : false;
+			GLB._androidVersion = parseFloat(_androidVersion);
+			if(parseInt(_androidVersion) < 4) GLB._repaintsWhileScrolling = false;
+		}
+		else{
+			//Windows phone, Blackberry etc.
+			GLB._repaintsWhileScrolling = false;
+		}
+	}
+}
+
+GLB._skew = true;
+if(GLB._isTouch && GLB._iOS && GLB._iOSVersion >= 10) GLB._skew = true;
+else if(GLB._isTouch && GLB._iOS) GLB._skew = false;
+else if(GLB._isTouch && GLB._androidVersion < 5) GLB._skew = false;
+
+GLB._supportsAutoPlay = true;
+if(GLB._isTouch && ((GLB._iOS && GLB._iOSVersion < 10) || (!GLB._iOS && GLB._androidVersion < 5))) GLB._supportsAutoPlay = false;
+//GLB._supportsAutoPlay = true;
+//GLB._supportsAutoPlay = false;
+
+GLB._hideSVG = false;
+if(GLB._isTouch && (!GLB._iOS && GLB._androidVersion < 3)) GLB._hideSVG = true;
+
+
+/*		Handle viewport size		*/
+//Measure screen size
+GLB.screensize = function(){
+	if(window.innerWidth) GLB._vw = window.innerWidth, GLB._vh = window.innerHeight;
+	else GLB._vw = document.documentElement.offsetWidth, GLB._vh = document.documentElement.offsetHeight;
+	GLB._vwOuter = GLB._vw;
+}
+//Store sizes
+GLB.resized = function(e){
+	GLB._oldvwOuter = GLB._vwOuter;
+	GLB.screensize();
+	//Cancel for touchscreens with same width (user just scrolling and topbar hiding/showing)
+	if(e && GLB._isTouch && GLB._oldvwOuter === GLB._vwOuter){
+		e.stopImmediatePropagation();
+		return;
+	}
+	if(!GLB._isTouch){
+		GLB.checkBodyW();
+		GLB._reliableSh = GLB._vh;
+	}
+	else{
+		//Touch screens screen height is variable on some platforms, because the browser bar changes height
+		if(GLB._vh < GLB._vw) GLB._reliableSh = Math.min(window.screen.availWidth, window.screen.availHeight);
+		else GLB._reliableSh = Math.max(window.screen.availWidth, window.screen.availHeight);
+		if(GLB._iOS){
+			if(navigator.standalone) GLB._reliableSh = GLB._vh;//fullscreen web app
+			else if(GLB._iosAndChrome && Math.max(GLB._vw, GLB._vh) > 900) GLB._reliableSh -= 20;//chrome iPad ios10
+			else if(Math.max(GLB._vw, GLB._vh) > 900){
+				GLB._reliableSh -= 39; //iPad ios10
+//				var _all = "VH: " + GLB._vh + " Rel: " + GLB._reliableSh
+//				alert(_all)
+				GLB._reliableSh = GLB._vh; //As long as we are not folding Safari menu, this works!
+			}
+			else GLB._reliableSh -= 20; //iPhone optimized for Safari iOS8&9
+		}
+		else{
+			//to-do add check for tablet size etc. they might have different sized topbar
+			GLB._reliableSh -= 24; //Android etc.
+		}
+	}
+	//Adjust for margins
+	//console.log("Resize complete, _vw, _vwOuter:", GLB._vw, GLB._vwOuter, "_relisableSh:", GLB._reliableSh);
+	//Update scroll value
+	GLB.scrolled(null);
+	//Is this mobile or desktop layout
+	GLB._isMobile = (GLB._vwOuter < GLB._mobileBreakpointW);
+	if(GLB._isMobile) GLB._caseW = GLB._vw - 50;
+	else GLB._caseW = Math.ceil(GLB._vw*.95 / 3);
+	//Set content offset
+	if(GLB._isMobile) GLB._menuClosedH = 40;
+	else GLB._menuClosedH = 54;
+	//debug
+	//GLB._reliableSh = 568;
+	GLB._relH = GLB._reliableSh-GLB._menuClosedH;
+	
+	clearTimeout(GLB._layoutUpdateTimer);
+	GLB._layoutUpdateTimer = setTimeout(GLB.dispatchUpdate, 100);
+}
+//Check for scrollbars and adjust _vw and force resize event
+GLB.checkBodyW = function(){
+	GLB._bodyRect = document.body.getBoundingClientRect(); //Used for getting actual width without scrollbars
+	GLB._wasScrollbarVisible = GLB._scrollbarVisible;
+	var _wDif = Math.abs(GLB._bodyRect.width - GLB._vwOuter);
+	if(_wDif > 2 && _wDif < 100) GLB._scrollbarVisible = true, GLB._vw = GLB._bodyRect.width;
+	else GLB._scrollbarVisible = false;
+}
+GLB.dispatchUpdate = function(){
+	//console.log("dispatchUpdate", GLB._windowScrollY);
+	window.dispatchEvent(GLBCustomEvent("LayoutUpdate", 0));
+}
+/*		Scroll handler to save window scrollTop		*/
+GLB.scrolled = function(e){
+	GLB._windowScrollY = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+}
+
+GLB.offsetY = function(_el){
+	return _el.getBoundingClientRect().top + GLB._windowScrollY;
+}
+/*		Event handling		*/
+//Custom events with detail parameter >=IE9
+function GLBEventsInit(){
+	var _oldBrowser = window.XDomainRequest ? true : false;
+	if(GLB._isIE && GLB._isIEVersion >= 11) _oldBrowser = true;
+	if(_oldBrowser){
+		//console.log("Is old browser");
+		(function () {
+			function CustomEvent ( event, params ) {
+				params = params || { bubbles: false, cancelable: false, detail: undefined };
+				var evt = document.createEvent( 'CustomEvent' );
+				evt.initCustomEvent( event, params.bubbles, params.cancelable, params.detail );
+				return evt;
+			};
+			CustomEvent.prototype = window.Event.prototype;
+			window.CustomEvent = CustomEvent;
+		})();
+	}
+}
+GLBEventsInit();
+function GLBCustomEvent(_name, _id){
+	var e;
+	if(window.CustomEvent) e = new CustomEvent(_name, {bubbles:true,cancelable:true,detail:_id});
+	else{
+		e = document.createEvent('Event');
+		e.initEvent(_name, true, true, {detail:_id});
+		e.detail = _id;
+	}
+	return e;
+}
+//Global event handler method
+function GLBEvents(elem,eventType,handler,add){
+	if(add){
+		if(elem.addEventListener) elem.addEventListener (eventType,handler,false);
+		 else if(elem.attachEvent) elem.attachEvent ('on'+eventType,handler);
+	}
+ 	else{
+		if(elem.removeEventListener) elem.removeEventListener (eventType,handler,false);
+		 else if(elem.detachEvent) elem.detachEvent ('on'+eventType,handler);
+	}
+}
+/*		Image object		*/
+function GLBImage(_url, _holder, _w, _h, _className, onloadCallback, _insertBefore){
+	var _this = this;
+	var _img,_rel,_imgW,_imgH;
+	if(_w&&_h) _img = new Image(_w, _h);
+	else _img = new Image();
+	_this.img = _img;
+	if(_className) _img.className = _className;
+	else _img.style.position = "absolute";
+	function loaded(e){
+		if(!_w||!_h) _imgW = _w = _img.naturalWidth, _imgH = _h = _img.naturalHeight;
+		_rel = _w/_h;
+		if(onloadCallback) onloadCallback.call(_this, e);
+	}
+	_this.load = function(){
+		_img.onload = loaded;
+		_img.src = _url;
+		//Prevent dragging
+		_img.onmousedown = function(e){
+			if(e && e.preventDefault) e.preventDefault();
+		}
+		if(_holder){
+			if(_insertBefore) _holder.insertBefore(_img, _holder.firstChild);
+			else _holder.appendChild(_img);
+		}
+	}
+	_this.moveToTop = function(){
+		_holder.appendChild(_img);
+	}
+	_this.destroy = function(){
+		try{
+			if(_holder) _holder.removeChild(_img);
+		}
+		catch(e){}
+		_img.src = "";
+		onloadCallback = null;
+		_img = null;
+	}
+	//Scale to fit or fill area and align
+	_this.scaleTo = function(_type, _minw, _minh, _alignH, _alignV){
+		var _valA = _minw/_minh, _valB = _rel;
+		if(_type == "fill"){}
+		else if(_type == "fit") _valA = _rel, _valB = _minw/_minh;
+		//Always make sure to fill container
+		if(_valA < _valB) _imgW = Math.ceil(_minh*_rel), _imgH = _minh;
+		else _imgW = _minw, _imgH = Math.ceil(_minw/_rel);
+		if(_type != "none") _img.style.width = _imgW + "px", _img.style.height = _imgH + "px";
+		else _imgW = _w, _imgH = _h;
+		//Center
+		if(_alignH == "center") _img.style.marginLeft = Math.round((_minw-_imgW)*.5) + "px";
+		else if(_alignH == "left") _img.style.marginLeft = "0px";
+		else if(_alignH == "right") _img.style.marginLeft = Math.round(_minw-_imgW) + "px";
+		if(_alignV == "center") _img.style.marginTop = Math.round((_minh-_imgH)*.5) + "px";
+		else if(_alignV == "top") _img.style.marginTop = "0px";
+		else if(_alignV == "bottom") _img.style.marginTop = Math.round(_minh-_imgH) + "px";
+	}
+	_this.getW = function(){
+		return _imgW;
+	}
+	_this.getH = function(){
+		return _imgH;
+	}
+}
+/* Swipe util */
+function GLBSwipe(_container, _parent){
+	var _this = this;
+	_this._itemW = 0;
+	var _limitX, _startTime, _endTime, _timeDown, _movedX, _resultX, _initX, _initDragX, _initDragY, _pageX, _pageY;
+	var _dragXIsInit = false, _dragYIsInit = false, _stickX = false;
+	function startSw(e){
+		//console.log("startSw")
+		_startTime = new Date().getTime();
+		_movedX = 0;
+		_stickX = false;
+		//Listen for movement and stop
+		if(GLB._isTouch){
+			_initDragX = _pageX = e.touches[0].pageX, _initDragY = _pageY = e.touches[0].pageY;
+			GLBEvents(_container, "touchstart", startSw, false);
+			GLBEvents(document, "touchend", endSw, true);
+			GLBEvents(document, "touchmove", moved, true);
+		}
+		else{
+			_initDragX = _pageX = e.pageX, _initDragY = _pageY = e.pageY;
+			GLBEvents(_container, "mousedown", startSw, false);
+			GLBEvents(document, "mouseup", endSw, true);
+			GLBEvents(document, "mousemove", moved, true);
+		}
+	}
+	function endSw(e){
+		if(GLB._isTouch){
+			GLBEvents(_container, "touchstart", startSw, true);
+			GLBEvents(document, "touchend", endSw, false);
+			GLBEvents(document, "touchmove", moved, false);
+		}
+		else{
+			GLBEvents(_container, "mousedown", startSw, true);
+			GLBEvents(document, "mouseup", endSw, false);
+			GLBEvents(document, "mousemove", moved, false);
+			_container.style.cursor = "auto";
+		}
+		TweenLite.ticker.removeEventListener('tick', dragEngine);
+		//Measure time pressed down
+		_endTime = new Date().getTime();
+		_timeDown = _endTime - _startTime;
+		//Snap
+		if((_timeDown > 300 && Math.abs(_movedX) > _this._itemW*.05) || (_timeDown < 300 && Math.abs(_movedX) > GLB._thresholdSwipe*2)){
+			if(_movedX > 0) _container.dispatchEvent(GLBCustomEvent("GLBSwipe", -1));
+			else _container.dispatchEvent(GLBCustomEvent("GLBSwipe", 1));
+		}
+		else _container.dispatchEvent(GLBCustomEvent("GLBSwipe", 0));
+		_dragXIsInit = _dragYIsInit = false;
+	}
+	_this.wasMoved = function(){
+		if(_dragXIsInit || _dragYIsInit) return true;
+		return false;
+	}
+	function moved(e){
+		if(GLB._isTouch) _pageX = e.touches[0].pageX, _pageY = e.touches[0].pageY;
+		else _pageX = e.pageX, _pageY = e.pageY;
+		//Check for scrolling vertical and disable
+		//console.log("moved", _pageX)
+		if(_dragYIsInit) return;
+		else if(!_dragXIsInit){
+			//Check threshold
+			if(Math.abs(_pageX-_initDragX) >= GLB._thresholdSwipe){
+				_dragXIsInit = true;
+				_movedX = 0, _initDragX = _pageX;
+				TweenLite.killTweensOf(_container, false, {x:true});
+				if(_container._gsTransform) _initX = _container._gsTransform.x;
+				else _initX = 0;
+				TweenLite.ticker.addEventListener('tick', dragEngine);
+				e.preventDefault();
+				_container.style.cursor = "-moz-grab", _container.style.cursor = "-webkit-grab";
+			}
+			else if(/*GLB._isTouch && */Math.abs(_pageY-_initDragY) > 6) _dragYIsInit = true;
+		}
+		else if(_dragXIsInit) e.stopImmediatePropagation(), e.preventDefault();
+	}
+	function dragEngine(e){
+		if(_stickX) _movedX = 0;
+		else _movedX += ((_pageX-_initDragX) - _movedX) * .4;
+		//Compensate if we have reached first or last image
+		_resultX = _movedX+_initX;
+		if(_resultX > 0 || _resultX < _limitX) _movedX *= .5, _resultX = _movedX+_initX;
+		TweenLite.set(_container, {x:_resultX, force3D:true});
+		
+		//Skew
+		/*if(GLB._skew){
+			TweenLite.to(_introOverlay, .4, {skewX:"-8deg", skewType:"simple", delay:.2, force3D:true, ease:Linear.easeNone});
+			TweenLite.to(_introOverlay, .4, {skewX:"0deg", skewType:"simple", delay:.6, force3D:true, ease:Strong.easeOut});
+		}*/
+	}
+	_this.addListeners = function(){
+		if(GLB._isTouch) GLBEvents(_container, "touchstart", startSw, true);
+		else GLBEvents(_container, "mousedown", startSw, true);
+	}
+	_this.removeListeners = function(){
+		if(GLB._isTouch) GLBEvents(_container, "touchstart", startSw, false);
+		else GLBEvents(_container, "mousedown", startSw, false);
+	}
+	_this.update = function(itemW, numItems){
+		_this._itemW = itemW;
+		_limitX = -itemW * (numItems-1);
+	}
+	_this.stickX = function(){
+		_stickX = true;
+	}
+}
+
+/*		Init		*/
+//Fires when all scripts have loaded
+GLBEvents(window, "resize", GLB.resized, true);
+GLB.resized(null);
+GLBEvents(window, "scroll", GLB.scrolled, true);
+console.log("Touch:", GLB._isTouch, "Dpi:", GLB._dpi);

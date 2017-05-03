@@ -1,0 +1,817 @@
+function Content(){
+	var _this = this;
+	var _content = document.getElementsByClassName("content")[0];
+	
+	//Build controller for both horizontal and vertical scroll - this is used in About and Contact too
+	_scrollNav = new ScrollNavigation(_content);
+	
+	new Menu();
+	
+	var _templates = [new Cases(_content, "cases"), new ContentPageTemplate(_content, "about"), new ContentPageTemplate(_content, "contact")];
+	var _numTemplates = _templates.length;
+	
+	function resized(e){
+		if(GLB._isMobile) _content.style.height = "auto";
+		else _content.style.height = GLB._relH + "px";
+		_scrollNav.resized();
+	}
+	GLBEvents(window, "resize", resized, true);
+	resized(null);
+	
+	var _currentTemplate = -1, _newTemplate = -1;
+	function pageChanged(e){
+		var _match = _router.getUrl();
+		_newTemplate = 0; //Default to cases/frton
+		for(var i=0;i<_numTemplates;i++){
+			//console.log(_templates[i]._url, _match)
+			if(_templates[i]._url == _match){
+				_newTemplate = i;
+				continue;
+			}
+		}
+		if(_newTemplate == _currentTemplate){
+			if(_newTemplate == 0) _templates[_currentTemplate].subpageChange(_match);
+			return;
+		}
+		if(_currentTemplate > -1) _templates[_currentTemplate].deactivate();
+		_currentTemplate = _newTemplate;
+		_templates[_currentTemplate].activate(_match);
+	}
+	GLBEvents(window, "pageChange", pageChanged, true);
+	pageChanged(null);
+	
+	//iOS10 fix for zoom (being enabled even if viewport meta doesn't allow)
+	if(GLB._isTouch && (GLB._iOS && GLB._iOSVersion >= 10)){
+		GLBEvents(document, "touchstart", iosTouch, true);
+		function iosTouch(e){
+			if(e.touches.length >= 2) e.preventDefault();
+		}
+	}
+}
+function getModule(_parent, _classname, _container, _refMe){
+	if(_parent == "about"){
+		if(_classname == "top") return new AboutTop(_container);
+		else if(_classname == "value") return new AboutValues(_container);
+		else if(_classname == "perspective") return new AboutPerspective(_container);
+		else if(_classname == "cross") return new AboutCross(_container);
+		else if(_classname == "brands") return new AboutBrands(_container);
+		else if(_classname == "end") return new AboutEnd(_container);
+	}
+	else if(_parent == "contact"){
+		if(_classname == "getintouch") return new ContactTop(_container);
+		else if(_classname == "workforus") return new ContactWorkForUs(_container, _classname);
+		else if(_classname == "who") return new ContactWorkForUs(_container, _classname);
+	}
+	else if(_parent == "case"){
+		if(_classname == "gallery") return new CaseGallery(_refMe, _container);
+		else if(_classname == "quote") return new CaseQuotesModule(_refMe, _container);
+		else if(_classname == "end") return new CaseEnd(_container);
+		else if(_classname == "twoState") return new CaseTwoState(_refMe, _container);
+		else if(_classname.substr(0, 9) == "wholesale") return new CaseWholesale(_container);
+		else if(_classname.substr(0, 12) == "customModule") return new CaseCustomModule(_refMe, _container);
+		else if(_classname.substr(0, 10) == "simpletext") return new CaseCustomModule(_refMe, _container);
+		else if(_classname.substr(0, 11) == "icongallery") return new CaseIconGallery(_refMe, _container);
+	}
+}
+function ScrollNavigation(_container, _numCases){
+	var _this = this;
+	var _state = 0; //0=front
+	var _firstTime = true, _running = false, _released = false, _allowWheel = true;
+	var _speedX = .1, _speedY = .1;
+	if(GLB._isTouch) _speedX = _speedY = .3;
+	var _lastMoved = 0, _delta = 0, _dir = 0, _pos = [], _decrease = .90, _tweenedX = 0, _tweenedY = 0, _limitX, _limitY;
+	var _scrollX = 0, _scrollY = 0, _scrollXinit = 0, _scrollYinit = 0, _mouseXInit = 0, _mouseYInit = 0, _mouseX = 0, _mouseY = 0, _mouseMovedX = 0, _mouseMovedY = 0;
+	var _wheelAccu = 0, _multiply = 0, _scrollSpeed, _wheelTimer;
+	
+	_this.setState = function(_n){
+		_state = _n;
+		removeListeners();
+		if(_firstTime){
+			_firstTime = false;
+			GLBEvents(document, "wheel", wheeled, true);
+			//Touch sideways drag
+			//GLBEvents(document, "mousedown", down, true);
+			GLBEvents(document, "touchstart", down, true);
+			GLBEvents(document, "keydown", keydown, true);
+		}
+		
+		if(_state == 0){
+			//Update position when closing case
+			GLBEvents(_container, "updateScrollX", updateScrollX, true);
+			if(!_running) _running = true, TweenLite.ticker.addEventListener('tick', move);
+		}
+		else if(_state == 1){
+			//Reset Y position (scrolled to top as default)
+			_tweenedY = _scrollY = 0;
+		}
+		move(null);
+	}
+	
+	_this.disableForNativescroll = function(){
+		removeListeners();
+		GLBEvents(document, "wheel", wheeled, false);
+		//Touch sideways drag
+		//GLBEvents(document, "mousedown", down, false);
+		GLBEvents(document, "touchstart", down, false);
+		_firstTime = true;
+	}
+		
+	function removeListeners(){
+		TweenLite.killTweensOf(_this);
+		GLBEvents(_container, "updateScrollX", updateScrollX, false);
+		_running = false, TweenLite.ticker.removeEventListener('tick', move);
+		_dir = 0;
+	}
+	
+	_this.resized = function(){
+		_limitY = -15000;
+	}
+	_this.setLimitX = function(_l){
+		_limitX = _l;
+		move(null);
+	}
+	_this.setLimitY = function(_l){
+		_limitY = _l;
+		move(null);
+	}
+	
+	_this.getScrollY = function(){
+		return _tweenedY;
+	}
+	
+	_this.swipeX = function(_w){
+		_scrollX += _w;
+		_released = false;
+		clearTimeout(_wheelTimer);
+		_wheelTimer = setTimeout(wheelReleased, 1000);
+	}
+	
+	//Scroll page to top
+	_this._top = 0;
+	_this.toTop = function(_time, _callback){
+		_this._top = _tweenedY;
+		removeListeners();
+		//Disable wheel while tweening
+		_allowWheel = false;
+		TweenLite.to(_this, _time, {_top:0, ease:Cubic.easeOut, onUpdate:_this.setScrollY, onComplete:allowWheelAgain, onCompleteParams:[_callback]});
+	}
+	function allowWheelAgain(_callback){
+		_allowWheel = true;
+		_callback.call();
+	}
+	_this.setScrollY = function(){
+		_scrollY = _tweenedY = _this._top;
+		_container.dispatchEvent(GLBCustomEvent("scrolledY", _tweenedY));
+	}
+	_this.snapY = function(_time, _y){
+		_this._top = _tweenedY;
+		removeListeners();
+		TweenLite.to(_this, _time, {_top:_y, ease:Quad.easeInOut, onUpdate:_this.setScrollY});
+	}
+
+	function down(e){
+		e.preventDefault();
+		e.stopPropagation();
+		_released = false;
+		clearTimeout(_wheelTimer);
+		_pos = [];
+		/*if(e.type == "mousedown"){
+			if(_state == 0){
+				_mouseXInit = _mouseX = e.clientX;
+				_mouseMovedX = 0, _scrollXinit = _scrollX;
+			}
+			else if(_state == 1){
+				_mouseYInit = _mouseY = e.clientY;
+				_mouseMovedY = 0, _scrollYinit = _scrollY;
+			}
+			GLBEvents(document, "mousemove", moved, true);
+			GLBEvents(document, "mouseup", up, true);
+		}
+		else{*/
+			if(_state == 0){
+				_mouseXInit = _mouseX = e.touches[0].pageX;
+				_mouseMovedX = 0, _scrollXinit = _lastMoved = _scrollX;
+			}
+			else if(_state == 1){
+				_mouseYInit = _mouseY = e.touches[0].pageY;
+				_mouseMovedY = 0, _scrollYinit = _lastMoved = _scrollY;
+			}
+			GLBEvents(document, "touchmove", moved, true);
+			GLBEvents(document, "touchend", up, true);
+		//}
+		//Engine
+		if(!_running) _running = true, TweenLite.ticker.addEventListener('tick', move);
+		TweenLite.killTweensOf(_this);
+	}
+	
+	function moved(e){
+		e.preventDefault();
+		e.stopPropagation();
+		/*if(e.type == "mousemove"){
+			if(_state == 0){
+				_mouseX = e.clientX;
+				_mouseMovedX = _mouseX-_mouseXInit;
+				_scrollX = _scrollXinit + _mouseMovedX;
+			}
+			else if(_state == 1){
+				_mouseY = e.clientY;
+				_mouseMovedY = _mouseY-_mouseYInit;
+				_scrollY = _scrollYinit + _mouseMovedY;
+			}
+		}
+		else{*/
+			if(_state == 0){
+				_mouseX = e.touches[0].pageX;
+				_mouseMovedX = _mouseX-_mouseXInit;
+				_scrollX = _scrollXinit + _mouseMovedX;
+			}
+			else if(_state == 1){
+				_mouseY = e.touches[0].pageY;
+				_mouseMovedY = _mouseY-_mouseYInit;
+				_scrollY = _scrollYinit + _mouseMovedY;
+			}			
+		//}
+	}
+	
+	function up(e){
+		//Slide away functionality (use latest 4 recorded points)
+		var _l = Math.min(_pos.length, 4);
+		_dir = 0;
+		if(!_released && _l > 0){
+			for(var i = 0; i < _l; ++i) _dir += _pos[i];
+			_dir /= _l;
+		}
+		e.preventDefault();
+		_released = true;
+		//GLBEvents(document, "mousemove", moved, false);
+		//GLBEvents(document, "mouseup", up, false);
+		GLBEvents(document, "touchmove", moved, false);
+		GLBEvents(document, "touchend", up, false);
+	}
+	
+	function wheeled(e){
+		try{
+			e.preventDefault();
+			e.stopImmediatePropagation();
+		}
+		catch(e){}
+		if(!_allowWheel) return;
+		_multiply = (e.deltaMode === 1) ? 16 : 1; //Firefox external mouse needs some more speed
+		_multiply *= 1.5;
+		if(_state == 0){
+			if(Math.abs(e.deltaX) > Math.abs(e.deltaY)) _scrollSpeed = e.deltaX * _multiply;
+			else _scrollSpeed = e.deltaY * _multiply;
+		}
+		else _scrollSpeed = e.deltaY * _multiply;
+		if(_scrollSpeed < -200) _scrollSpeed = -200;
+		else if(_scrollSpeed > 200) _scrollSpeed = 200;
+		if(_state == 0) _scrollX -= _scrollSpeed;
+		else if(_state == 1) _scrollY -= _scrollSpeed;
+		
+		_released = false;
+		clearTimeout(_wheelTimer);
+		_wheelTimer = setTimeout(wheelReleased, 1000);
+		//Engine
+		if(!_running) _running = true, TweenLite.ticker.addEventListener('tick', move);
+		TweenLite.killTweensOf(_this);
+	}
+	function keydown(e){
+		if(_state == 0) return;
+		if(e.keyCode == 40 || e.keyCode == 38) e.preventDefault();
+		if(e.keyCode == 40) wheeled({deltaMode:0, deltaX:0, deltaY:100});
+		else if(e.keyCode == 38) wheeled({deltaMode:0, deltaX:0, deltaY:-100});
+	}
+	function wheelReleased(e){
+		_released = true;
+		_dir = 0;
+	}
+	function updateScrollX(e){
+		_tweenedX = _scrollX = -e.detail;
+		_dir = 0;
+		_released = true;
+	}
+	
+	function move(e){
+		if(_released){
+			//Thrown
+			if(_state == 0) _scrollX -= _dir;
+			else _scrollY -= _dir;
+			_dir *= _decrease; //Decrease speed
+			if(_state == 1 && Math.abs(_dir) < .02){
+				//console.log("stop interactive engine (y only)");
+				_dir = 0;
+				_running = false, TweenLite.ticker.removeEventListener('tick', move);
+				document.dispatchEvent(GLBCustomEvent("stoppedScrolledY", 0));
+			}
+		}
+		else{
+			if(_state == 0) _delta = _lastMoved-_scrollX, _lastMoved = _scrollX;
+			else _delta = _lastMoved-_scrollY, _lastMoved = _scrollY;
+			//Dragged
+			if(_pos.length > 4) _pos.shift();
+		    _pos.push(_delta);
+		}
+		
+		if(_state == 0){
+			if(_scrollX > 0) _scrollX = 0;
+			else if(_scrollX < _limitX) _scrollX = _limitX;
+			_tweenedX += (_scrollX-_tweenedX) * _speedX;
+			if(_released && Math.abs(_tweenedX-_scrollX) < .05) _container.dispatchEvent(GLBCustomEvent("scrolledX", Math.round(_tweenedX)));
+			else _container.dispatchEvent(GLBCustomEvent("scrolledX", _tweenedX));
+		}
+		else{
+			if(_scrollY > 0) _scrollY = 0;
+			else if(_scrollY < _limitY) _scrollY = _limitY;
+			_tweenedY += (_scrollY-_tweenedY) * _speedY;
+			_container.dispatchEvent(GLBCustomEvent("scrolledY", _tweenedY));
+		}
+	}
+}
+
+/* text with black background */
+function LabelWithBg(_parent, _container, _id, _numCases){
+	var _this = this;
+	var _mySplitText;
+	var _bgs = [];
+	var _title = _parent.getElementsByClassName("title")[0];
+	var _openLabel = _parent.getElementsByClassName("openLabel")[0];
+	//Duplicate title
+	var _titleOpen = document.createElement("div");
+	_titleOpen.className = "openTitle";
+	_titleOpen.style.color = _container.getAttribute("data-color") || "inherit";
+	_titleOpen.textContent = _title.textContent;
+	_parent.insertBefore(_titleOpen, _openLabel);
+	//Add index
+	function caseIndex(){
+		var _d = document.createElement("div");
+		_d.className = "index";
+		_d.textContent = "CASE " + (_id+1) + "/" + _numCases + ":";
+		return _d;
+	}
+	_title.insertBefore(caseIndex(), _title.firstChild);
+	
+	var _label = _parent.getElementsByClassName("label")[0];
+	var _openH1 = new H1WithBg(_parent, _parent.getElementsByClassName("openLabel")[0]);
+	var _openP = _parent.getElementsByTagName("p")[0] || null;
+	
+	var _bgHolder = document.createElement("div");
+	_bgHolder.className = "labelBg";
+	_parent.insertBefore(_bgHolder, _parent.firstChild);
+	
+	var _lineHeight, _maxLines = 6, _numlines = 0, _lastW = 0, _lastVW = 0;
+	var _firstTime = true, _show = true, _isHidden = true, _openIsOn = false;
+		
+	function widthOfLine(_el, _line){
+		var _children = _el.lines[_line].getElementsByTagName("div");
+		var _lastChild = _children[_children.length-1];
+		return _lastChild.offsetLeft+_lastChild.offsetWidth;
+	}
+
+	function drawBg(_el, _line){
+		var _w = widthOfLine(_el, _line);
+		try{
+			_bgs[_line].style.width = _w + "px";
+			if(_isHidden){
+				TweenLite.set(_mySplitText.lines[_line], {autoAlpha:0, force3D:true});
+				TweenLite.set(_bgs[_line], {scaleX:0, display:"none", force3D:true, transformOrigin:"0 0"});
+			}
+			else _bgs[_line].style.display = "block";
+		}
+		catch(e){
+			console.log("drawBg error!");
+		}
+	}
+	
+	_this.resized = function(){
+		if(_lastW == GLB._caseW && _lastVW == GLB._vw) return; //Avoid skipping animations
+		_lastW = GLB._caseW, _lastVW = GLB._vw;
+		_title.style.maxWidth = _label.style.maxWidth = GLB._caseW-70 + "px";
+		if(_firstTime){
+			_firstTime = false;
+			setTimeout(forceRefresh, 400);
+			return;
+		}
+		if(_mySplitText){
+			_mySplitText.revert();
+			_mySplitText.split();
+			_numlines = _mySplitText.lines.length; //an array of all the divs that wrap each character
+		}
+		else{
+			_mySplitText = new SplitText(_label, {type:"lines,chars"});
+			_mySplitText.bgs = [];
+			_numlines = _mySplitText.lines.length; //an array of all the divs that wrap each character
+			for(var i=0;i<_maxLines;i++){
+				var _bg = document.createElement("div");
+				_bg.className = "bg";
+				_bgs.push(_bg);
+				_bgHolder.appendChild(_bg);
+			}
+			TweenLite.set(_title, {autoAlpha:0, force3D:true});
+			//Upload to gpu
+			TweenLite.set(_bgHolder, {y:0, force3D:true});
+			TweenLite.set(_label, {y:0, force3D:true});
+			TweenLite.set(_title, {y:0, force3D:true});
+		}
+		_lineHeight = _label.offsetHeight/_numlines;
+		for(var i=0;i<_numlines;i++) drawBg(_mySplitText, i);
+		for(i=_numlines;i<_maxLines;i++) _bgs[i].style.width = 0 + "px", _bgs[i].style.display = "none";
+		
+		//For items with only two lines, we force them up
+		if(!GLB._isMobile && _numlines == 2) _label.style.bottom = _bgHolder.style.bottom = 20 + _lineHeight + "px";
+		else if(!GLB._isMobile && _numlines != 2) _label.style.bottom = _bgHolder.style.bottom = 20 + "px";
+		//Position title above (desktop) or use top position (mobile)
+		if(GLB._isMobile) _label.style.top = _bgHolder.style.top = "55vh";
+		else if(GLB._isTouch) _title.style.bottom = _numlines * _lineHeight + 55 + "px";
+		else _title.style.bottom = Math.max(3, _numlines) * _lineHeight + 25 + "px";
+		if(GLB._isTouch) _label.className = "label touch", _bgHolder.className = "labelBg touch";
+		else _label.className = "label", _bgHolder.className = "labelBg";
+		_openH1.resized();
+	}
+	function forceRefresh(){
+		_lastW = 0;
+		_this.resized();
+	}
+	
+	_this.over = function(){
+		//return;
+		TweenLite.to(_bgHolder, .3, {y:-8, force3D:true, ease:Quad.easeOut});
+		TweenLite.to(_label, .3, {y:-8, force3D:true, ease:Quad.easeOut});
+		TweenLite.to(_title, .3, {y:-8, force3D:true, ease:Quad.easeOut});
+		
+	}
+	_this.out = function(){
+		//return;
+		TweenLite.to(_bgHolder, .4, {y:0, force3D:true, ease:Quad.easeOut});
+		TweenLite.to(_label, .4, {y:0, force3D:true, ease:Quad.easeOut});
+		TweenLite.to(_title, .4, {y:0, force3D:true, ease:Quad.easeOut});
+	}
+	//Hide labels
+	_this.hide = function(){
+		_show = false;
+		//if(_isHidden) return;
+		_isHidden = true;
+		//console.log("Open label", _numlines)
+		TweenLite.killTweensOf(_title);
+		TweenLite.to(_title, .2, {autoAlpha:0, force3D:true, ease:Cubic.easeOut});
+		for(var i=0;i<_numlines;i++){
+			TweenLite.killTweensOf(_mySplitText.lines[i]);
+			TweenLite.killTweensOf(_bgs[i]);
+			TweenLite.to(_mySplitText.lines[i], .2, {autoAlpha:0, force3D:true, delay:i*.02, ease:Cubic.easeOut});
+			TweenLite.to(_bgs[i], .3, {scaleX:0, display:"none", force3D:true, transformOrigin:"0 0", delay:i*.02, ease:Cubic.easeOut});
+		}
+		
+		//Show labels for open case:
+		if(_openIsOn) return;
+		_openIsOn = true;
+		TweenLite.killTweensOf(_titleOpen);
+		if(_openP) TweenLite.killTweensOf(_openP);
+		TweenLite.to(_titleOpen, .5, {autoAlpha:1, delay:_openTime, force3D:true, ease:Cubic.easeOut});
+		if(_openP) TweenLite.to(_openP, .8, {autoAlpha:1, delay:_openTime+.2, force3D:true, ease:Quad.easeInOut});
+		_openH1.animIn(_openTime, true);
+	}
+	//Show labels again for frontpage
+	_this.show = function(_d){
+		_show = true;
+		_isHidden = false;
+		//console.log("Close label", _numlines)
+		if(!_d) _d = 0;
+		TweenLite.killTweensOf(_title);
+		TweenLite.to(_title, 1.2, {autoAlpha:1, force3D:true, delay:_d+0, ease:Quad.easeInOut});
+		for(var i=0;i<_numlines;i++){
+			TweenLite.killTweensOf(_mySplitText.lines[i]);
+			TweenLite.killTweensOf(_bgs[i]);
+			TweenLite.to(_mySplitText.lines[i], 1.0, {autoAlpha:1, force3D:true, delay:i*.02+.4 + _d, ease:Quad.easeOut});
+			TweenLite.to(_bgs[i], .8, {scaleX:1, display:"block", transformOrigin:"0 0", force3D:true, delay:i*.02 + _d, ease:Strong.easeInOut});
+		}
+		
+		//Hide labels for open case:
+		if(!_openIsOn) return;
+		_openIsOn = false;
+		TweenLite.killTweensOf(_titleOpen);
+		if(_openP) TweenLite.killTweensOf(_openP);
+		TweenLite.to(_titleOpen, .2, {autoAlpha:0, force3D:true, ease:Cubic.easeOut});
+		if(_openP) TweenLite.to(_openP, .2, {autoAlpha:0, force3D:true, ease:Cubic.easeOut});
+		_openH1.animOut(true);
+	}
+	_this.animIn = function(_d){
+		if(_show) _this.show(_d);
+	}
+	_this.moveY = function(_y){
+		if(!_openIsOn) return;
+		TweenLite.set(_titleOpen, {y:_y, force3D:true});
+		TweenLite.set(_openH1.instance, {y:_y, force3D:true});
+		if(_openP) TweenLite.set(_openP, {y:_y, force3D:true});
+	}
+}
+
+function H1WithBg(_parent, _label){
+	var _this = this;
+	_this.instance = _label;
+	var _mySplitText;
+	var _bgs = [];
+	var _f3d = false;
+	
+	var _bgHolder = document.createElement("div");
+	_bgHolder.className = "labelBg";
+	var _isOn = false, _lineHeight, _maxLines = 6, _numlines = 0;
+	//For portrait screens we sometimes need more lines
+	if(GLB._isTouch && GLB._vw < 1200) _maxLines = 10;
+		
+	function widthOfLine(_el, _line){
+		var _children = _el.lines[_line].getElementsByTagName("div");
+		var _lastChild = _children[_children.length-1];
+		return _lastChild.offsetLeft+_lastChild.offsetWidth;
+	}
+
+	function drawBg(_el, _line){
+		var _w = widthOfLine(_el, _line);
+		if(_w < 20) _w = 0;
+		try{
+			_bgs[_line].style.width = _w + "px";
+			_bgs[_line].style.display = "block";
+			if(!_isOn) TweenLite.set(_bgs[_line], {scaleX:0, display:"none", force3D:_f3d, transformOrigin:"0 0"});
+		}
+		catch(e){
+			console.log("drawBg error!");
+		}
+	}
+	
+	_this.resized = function(){
+		if(_mySplitText){
+			_mySplitText.revert();
+			_mySplitText.split();
+			_numlines = _mySplitText.lines.length; //an array of all the divs that wrap each character
+			if(!_isOn){
+				for(var i=0;i<_numlines;i++) TweenLite.set(_mySplitText.lines[i], {autoAlpha:0});
+			}
+			if(GLB._isIE) for(var i=0;i<_maxLines;i++) _bgHolder.appendChild(_bgs[i]);
+		}
+		else{
+			_mySplitText = new SplitText(_label, {type:"lines,chars"});
+			_mySplitText.bgs = [];
+			_numlines = _mySplitText.lines.length; //an array of all the divs that wrap each character
+			for(var i=0;i<_maxLines;i++){
+				var _bg = document.createElement("div");
+				_bg.className = "bg";
+				_bgs.push(_bg);
+				_bgHolder.appendChild(_bg);
+				if(i<_numlines) TweenLite.set(_mySplitText.lines[i], {autoAlpha:0});
+			}
+		}
+		_label.insertBefore(_bgHolder, _label.firstChild);
+		_lineHeight = _label.offsetHeight/_numlines;
+		for(var i=0;i<_numlines;i++) drawBg(_mySplitText, i);
+		for(i=_numlines;i<_maxLines;i++) _bgs[i].style.width = 0 + "px", _bgs[i].style.display = "none";
+	}
+	_this.resized();
+	
+	//Hide labels
+	_this.animOut = function(_fadeText){
+		_isOn = false;
+		//console.log("animOut label", _numlines)
+		for(var i=0;i<_numlines;i++){
+			if(_fadeText){
+				TweenLite.killTweensOf(_mySplitText.lines[i]);
+				TweenLite.set(_mySplitText.lines[i], {autoAlpha:0});
+			}
+			TweenLite.killTweensOf(_bgs[i]);
+			TweenLite.set(_bgs[i], {scaleX:0, display:"none", force3D:_f3d, transformOrigin:"0 0"});
+		}
+	}
+	//Show labels again for frontpage
+	_this.animIn = function(_d, _fadeText){
+		if(_isOn) return;
+		_isOn = true;
+		if(!_d) _d = 0;
+		//console.log("animIn label", _numlines)
+		for(var i=0;i<_numlines;i++){
+			TweenLite.killTweensOf(_mySplitText.lines[i]);
+			if(_fadeText){
+				TweenLite.set(_mySplitText.lines[i], {autoAlpha:0});
+				TweenLite.to(_mySplitText.lines[i], .9, {autoAlpha:1, delay:i*.1+_d, ease:Quad.easeInOut});
+			}
+			else TweenLite.set(_mySplitText.lines[i], {autoAlpha:1, delay:i*.1+_d});
+			TweenLite.killTweensOf(_bgs[i]);
+			TweenLite.set(_bgs[i], {scaleX:0, force3D:_f3d, transformOrigin:"0 0"});
+			TweenLite.to(_bgs[i], .8, {scaleX:1, display:"block", force3D:_f3d, transformOrigin:"0 0", delay:i*.1+_d, ease:Strong.easeOut});
+		}
+	}
+}
+
+function BlackBar(_parent, _afterParagraph){
+	var _me = document.createElement("div");
+	_me.className = "blackBar";
+	function toParent(){
+		try{
+			_parent.appendChild(_me);
+		}
+		catch(e){}
+	}
+	if(_afterParagraph){
+		try{
+			_parent.insertBefore(_me, _parent.getElementsByClassName("statements")[0]);
+		}
+		catch(e){
+			toParent();
+		}
+	}
+	else toParent();
+}
+function BlackBarInside(_parent, _beforeElement){
+	var _me = document.createElement("div");
+	_me.className = "blackBar";
+	_parent.insertBefore(_me, _beforeElement);
+}
+
+function Router(){
+	var _apiPrefix = "/";
+	//var _apiPrefix = "/clients/normik/16_3/";
+	var _base = document.getElementsByTagName('base')[0].getAttribute("href");
+	if(_base.indexOf("/Normik/") != -1) _apiPrefix = "/Normik/"; //Local testing
+	var _prefix = _apiPrefix;
+	var _titlePrefix = "Nørgård Mikkelsen";
+	var _this = this;
+	var _useAPI = !!(window.history && history.pushState); //Check for History API; //History API or hash approach
+	if(GLB._isTouch && (!GLB._iOS && GLB._androidVersion < 4.3)) _useAPI = false;
+	var _firstTime = true;
+	var _pages = [];
+	var _gaPath = "";
+	//DEBUG
+	//_useAPI = false;
+	
+	if(!_useAPI) _prefix = "#";
+	var _oldUrl = "", _currentUrl = "", _previousPageUrls = [];
+	//console.log("Router, history supported:", _useAPI);
+	
+	//Check that deeplink (if any) has same format
+	var _hostname = window.location.hostname;
+	var _firstUrl, _firstPath = window.location.pathname;
+	var _firstHash = window.location.hash;
+	var _isBlog = (_hostname.indexOf("blog") != -1);
+	if(!_isBlog && _firstHash.length > 1){
+		//Has deeplink with hash on start up
+		if(_useAPI){
+			_firstUrl = _firstHash.substr(1);
+			window.location.hash = "";
+			window.location.pathname = _prefix + _firstUrl; //refreshes page without hash
+		}
+		else _currentUrl = cleanUrl(window.location.hash || "");
+	}
+	else if(!_isBlog && _firstPath.length > _apiPrefix.length){
+		//Has deeplink without hash on start up
+		if(!_useAPI){
+			_firstUrl = _firstPath.substr(_apiPrefix.length);
+			window.location = _apiPrefix + _prefix + _firstUrl; //refreshes page with hash
+		}
+		else _currentUrl = cleanUrl(window.location.pathname || "");
+	}
+	//Add slash in end
+	if(!_isBlog && _useAPI && _currentUrl.substr(_currentUrl.length-1) != "/") _currentUrl = _currentUrl+"/";
+	
+	//Respond to back/forward browser navigation
+	function popstate(e){
+		respondToState();
+	}
+	if(_useAPI) popstate(), GLBEvents(window, "popstate", popstate, true);
+	
+	
+	//Respond to hash change for older browsers
+	function hashChanged(e){
+		respondToState();
+	}
+	if(!_useAPI) hashChanged(), GLBEvents(window, "hashchange", hashChanged, true);
+	
+	
+	//Set address
+	_this.setUrl = function(_newstate){
+		if(_newstate == "" || _newstate == "/") _newstate = _prefix;
+		if(_useAPI){
+			//console.log("new", _newstate);
+			window.history.pushState({}, "", _newstate);
+			respondToState();
+		}
+		else window.location.hash = _newstate;
+	}
+	
+	//Get address
+	_this.getUrl = function(){
+		return _currentUrl;
+	}
+	_this.getPages = function(){
+		return _pages;
+	}
+	_this.init = function(){
+		respondToState();
+	}
+	
+	//Address was changed, get the url and dispatch global pageChange event
+	function respondToState(){
+		_oldUrl = _currentUrl;
+		if(_useAPI) _currentUrl = cleanUrl(window.location.pathname || "");
+		else _currentUrl = cleanUrl(window.location.hash || "");
+		//Remove slash in beginning
+		if(_currentUrl == "/") _currentUrl = "";
+		else if(_currentUrl.indexOf("/") == 0) _currentUrl = _currentUrl.substr(1);
+		//Add slash in end
+		if(_currentUrl.substr(_currentUrl.length-1) != "/") _currentUrl = _currentUrl+"/";
+		track();
+		if(!_firstTime && _oldUrl == _currentUrl){
+			console.log("Same url firing statechange", _oldUrl);
+			window.dispatchEvent(GLBCustomEvent("subPageChange", 0));
+			return;
+		}
+		_firstTime = false;
+		//console.log("respondToState, page:", _currentUrl, "old:", _oldUrl);
+		setTitle();
+		//Pages listening can animIn/Out
+		window.dispatchEvent(GLBCustomEvent("pageChange", 0));
+	}
+	function track(){
+		//Track
+		try{
+			_gaPath = "";
+			var _l = _pages.length;
+			for(var i=0;i<_l;i++) _gaPath += "/"+_pages[i];
+			/*ga('set', 'page', _gaPath);
+			ga('send', 'pageview');*/
+			dataLayer.push({'event': 'nmic_pageview'});
+		}
+		catch(e){
+			console.log("Couldn't track GA!");
+		}
+	}
+	function setTitle(){
+		if(_currentUrl == "" || _currentUrl == "/"){
+			document.title = _titlePrefix;
+			return;
+		}
+		try{
+			var _tAr = _currentUrl.split("/"), _l = _tAr.length, _t = _titlePrefix;
+			if(_tAr[_l-1] == "") _l--;
+			for(var i=0;i<_l;i++) _t += " - " + _tAr[i].substr(0, 1).toUpperCase() + _tAr[i].substr(1);
+			document.title = _t;
+		}
+		catch(e){document.title = _titlePrefix;}
+	}
+	function cleanUrl(_in){
+		//Only return first page and not subpages
+		_pages = removePrefix(_in).split("/");
+		//console.log("_array", _pages);
+		if(_pages[0] == "" && _pages.length > 1) _pages.splice(0, 1);
+		if(_pages[_pages.length-1] == "" && _pages.length > 1) _pages.splice(_pages.length-1);
+		return _pages[0];
+	}
+	function removePrefix(_in){
+		var _l = _prefix.length;
+		if(_l > 0) return _in.substr(_l);
+		else return _in;
+	}
+}
+
+//Manage Youtube
+var _YoutubeReady = false, _YoutubeJsAdded = false;
+function onYouTubeIframeAPIReady(){
+	_YoutubeReady = true;
+	window.dispatchEvent(GLBCustomEvent("YoutubeReady", 0));
+}
+function loadYoutube(){
+	if(!_YoutubeJsAdded){
+		_YoutubeJsAdded = true;
+		//Loads the IFrame Player API code asynchronously.
+		var tag = document.createElement('script');
+		tag.src = "//youtube.com/iframe_api";
+		document.body.appendChild(tag);
+	}
+	else window.dispatchEvent(GLBCustomEvent("YoutubeReady", 0));
+}
+
+//Init
+var _router = new Router();
+var _scrollNav, _ytPlayer;
+function gpuHack(){
+	if(GLB._isTouch || GLB._isIE || GLB._maxResW > 1800) return;
+	//console.log("GPU hack");
+	var gl;
+	var canvas = document.createElement("canvas");
+	canvas.className = "glcanvas";
+	canvas.width = "16", canvas.height = "16";
+	
+	try{
+		gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+		if(!gl) return;
+	    //Draw color
+		gl.viewport(0, 0, 16, 16);
+		gl.clearColor(1, 1, 1, 1);
+		gl.clear(gl.COLOR_BUFFER_BIT);
+		document.body.appendChild(canvas);
+	}
+	catch(e){
+		//no webgl
+		console.log("no webgl")
+	}
+}
+gpuHack();
+setTimeout(init, 200);//Wait for fonts to load
+function init(){
+	new Content();
+}
